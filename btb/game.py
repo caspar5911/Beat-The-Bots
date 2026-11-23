@@ -264,13 +264,18 @@ class Game:
     # ---------------------------------------------------------------- texts
     def round_text(self, day: dt.date, stocks: list[dict], voters: int = 0) -> str:
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
-                 "Higher or lower at the end of the day than when the market opens?",
-                 "⏫⏬ very sure (+5 / −11) · ⬆️⬇️ think so (+3 / −4) · not sure: don't tap", ""]
+                 "<b>How to play:</b> the US market opens tonight. For each stock below, guess if its price will be "
+                 "<b>higher or lower</b> when the market closes than when it opens.",
+                 "• Tap ⬆️ if you think higher, ⬇️ if you think lower (+3 if right, −4 if wrong).",
+                 "• Very sure? Tap ⏫ or ⏬ instead: +5 if right, but −11 if wrong.",
+                 "• Not sure? Skip it: no points lost.",
+                 f"{esc(self.bot)} (our AI) is playing too. Can you beat it?", ""]
         for i, s in enumerate(stocks, 1):
             lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])} · {_move(s)}")
             if s["headlines"]:
                 lines.append(f"   • {esc(s['headlines'][0]['title'][:110])}")
-        lines += ["", f"Picks close at {_sg(lock_at(day))} Singapore time. Players so far: {voters}", DISCLAIMER]
+        lines += ["", f"Picks close at {_sg(lock_at(day))} Singapore time. Results tomorrow morning. "
+                      f"Players so far: {voters}", DISCLAIMER]
         return "\n".join(lines)
 
     @staticmethod

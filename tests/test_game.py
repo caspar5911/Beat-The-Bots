@@ -130,7 +130,7 @@ def test_whole_day():
     assert [len(r) for r in buttons] == [4, 4, 4]                      # just the stocks: no extra rows
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
-    assert "Huat or Not?" in text and "Not money advice" in text and "very sure" in text and "don't tap" in text
+    assert "Huat or Not?" in text and "Not money advice" in text and "How to play" in text and "Not sure? Skip it" in text
     assert "goes up" not in text                     # the AI's calls stay hidden until the lock
     assert calls == ts
     up, down = buttons[0][0][1], buttons[0][1][1]
@@ -950,7 +950,7 @@ def test_open_round_switches_to_new_rules_on_start():
     game.refresh_open_rounds()
     v = store.votes(key)[0]
     assert (v["conf"], v["double"]) == ("lean", 0)
-    assert tg.edits and "very sure" in tg.edits[-1][1]
+    assert tg.edits and "How to play" in tg.edits[-1][1]
     assert "Unknown" in game.on_button(f"d|20261123|{t}", 7, "Ann", ny(DAY, 9))   # double down is gone
 
 
