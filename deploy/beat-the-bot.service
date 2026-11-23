@@ -1,0 +1,12 @@
+[Unit]
+Description=Beat the Bot: daily stock game on Telegram
+After=network-online.target moomoo-opend.service
+
+[Service]
+WorkingDirectory=%h/projects/beat-the-bot
+ExecStart=%h/projects/beat-the-bot/.venv/bin/python -m btb run
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
