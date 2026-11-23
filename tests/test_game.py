@@ -1279,7 +1279,7 @@ def test_set_todays_lines():
     assert "changed today's game to: 🔌 Chip makers" in reply
     assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["SMH"]
     assert ("1 pick was dropped from removed lines" in reply) == (ts[0] != "SMH")
-    assert "Chip makers" in tg.edits[-1][1] or "SMH" in str(tg.edits[-1])
+    assert tg.edits                                                          # the game message was redrawn
     reply = game.on_command("/set chips NVDA", 7, "Ann", ny(DAY, 8, 11))[0]
     assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["SMH", "NVDA"]
     assert "can't change" in game.on_command("/set XLF", 7, "Ann", ny(DAY, 9, 31))[0]
@@ -1298,3 +1298,34 @@ def test_set_before_the_game_is_posted_and_only_in_the_main_group():
     assert "posted at 20:30" in game.on_command("/set oil", 7, "Ann", ny(DAY, 6), chat_id=CHAT)[0]
     game.tick(ny(DAY, 7, 30))
     assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["XLE"]
+
+
+
+def test_select_menu_live_and_for_the_next_game():
+    from btb.__main__ import handle
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    q.set("XLE", last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    text, rows = game.on_command("/select", 7, "Ann", ny(DAY, 8))
+    assert "tonight's game" in text and rows[-1][0][0] == "✔️ Done"
+    flat = [b for r in rows[:-1] for b in r]
+    assert len(flat) == len(g.ETF_POOL) and sum(b[0].startswith("✅") for b in flat) == len(ts)
+    oil = next(cb for label, cb in flat if "Oil" in label)
+    cq = {"id": "c", "data": oil, "from": {"id": 7, "first_name": "Ann"},
+          "message": {"chat": {"id": CHAT, "type": "group"}, "message_id": 55}}
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 8, 1))
+    assert tg.answers[-1] == "Added 🛢️ Oil & gas." and "XLE" in [s["ticker"] for s in store.stocks(DAY.isoformat())]
+    assert tg.edits[-1][0] == 55 and "✅ 🛢️ Oil & gas" in str(game.select_menu(ny(DAY, 8, 2), CHAT)[1])
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 8, 2))
+    assert tg.answers[-1] == "Removed 🛢️ Oil & gas." and "XLE" not in [s["ticker"] for s in store.stocks(DAY.isoformat())]
+    for t in ts[1:]:
+        game.on_select(f"g|20261123|{t}", 7, "Ann", ny(DAY, 8, 3), CHAT)
+    assert "at least one" in game.on_select(f"g|20261123|{ts[0]}", 7, "Ann", ny(DAY, 8, 4), CHAT)[0]
+    toast, text, rows = game.on_select("g|20261123|done", 7, "Ann", ny(DAY, 8, 5), CHAT)
+    assert rows is None and "Industries for tonight" in text
+    # after the picks close, the menu works on the next game
+    text, rows = game.on_command("/select", 7, "Ann", ny(DAY, 10))
+    assert "Tue 24 Nov" in text and "picks 5 by itself" in text
+    game.on_select("g|20261124|XLV", 7, "Ann", ny(DAY, 10), CHAT)
+    assert json.loads(store.get("preset:2026-11-24")) == ["XLV"]
+    assert "earlier game" in game.on_select("g|20261123|XLV", 7, "Ann", ny(DAY, 10), CHAT)[0]

@@ -125,7 +125,8 @@ TICKER = re.compile(r"^[A-Z][A-Z.]{0,5}$")
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
-COMMANDS = [("today", "Today's game"), ("set", "Choose today's lines, e.g. /set chips"),
+COMMANDS = [("today", "Today's game"), ("select", "Tap to choose industries for the game"),
+            ("set", "Choose today's lines, e.g. /set chips"),
             ("add", "Add a stock to today's game"),
             ("suggest", "Suggest a stock for the next game"),
             ("pick", "Pick any stock yourself, e.g. /pick NVDA"),
@@ -312,7 +313,7 @@ def help_text(title: str, bot: str) -> str:
             "⬆️ / ⬇️ <b>think so</b>: +3 if right, −4 if wrong\n"
             "Not sure? Don't tap (0 points).\n"
             f"{esc(bot)} (our AI) plays too. Results come the next morning.\n\n"
-            "🎛 /set chips banks NVDA: choose exactly what's in today's game (main group only)\n"
+            "🎛 /select: tap industries in or out of the game · /set chips banks NVDA: type it instead\n"
             "➕ /add NVDA: add a stock to today's game (anyone can pick it, or skip it)\n"
             "💡 /suggest NVDA: suggest a stock for the next game (the 2 most-suggested join it)\n"
             "📌 /pick NVDA: pick any US stock yourself (3 a day, own score)\n"
@@ -367,7 +368,8 @@ class Game:
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
                  "Higher or lower at the close than at the open? " + self.what_lines(stocks),
                  "⬆️⬇️ +3 / −4 · ⏫⏬ very sure +5 / −11 · not sure: skip"]
-        lines += [f"{esc(s['note'])}: <b>{esc(s['ticker'])}</b>" for s in stocks if s.get("note")]
+        lines += [f"{esc(s['note'])}: <b>{esc(s['ticker'])}</b>" for s in stocks
+                  if s.get("note") and not s["note"].startswith("🎛")]
         lines += [f"🔒 Picks close {_sg(lock_at(day))} · 👥 {voters} playing · 🤖 {esc(self.short)} is playing too",
                   "<i>Just a game, not advice. Tap a name for details.</i>"]
         return "\n".join(lines)
@@ -447,6 +449,90 @@ class Game:
                 self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
         return (f"🎛 {esc(name)} changed today's game to: {esc(names)}. Pick on the game message above."
                 + (f" ({lost} pick{'s were' if lost != 1 else ' was'} dropped from removed lines.)" if lost else ""))
+
+    def select_target(self, now: dt.datetime) -> tuple[dt.date, bool]:
+        """(game day, live): today's open game while picks are open, else the next game to be posted."""
+        ny = now.astimezone(NY)
+        today = ny.date()
+        if market.is_trading_day(today):
+            r = self.store.round(today.isoformat())
+            if r is not None and r["status"] == "open" and ny < lock_at(today):
+                return today, True
+            if r is None and ny.time() < LAST_POST:
+                return today, False
+        return market.next_trading_day(today), False
+
+    def select_lines(self, day: dt.date, live: bool) -> list[str]:
+        if live:
+            return [s["ticker"] for s in self.store.stocks(day.isoformat())]
+        return json.loads(self.store.get(f"preset:{day.isoformat()}", "[]"))
+
+    def select_menu(self, now: dt.datetime, chat_id: int | None, note: str = ""):
+        """Tap industries in or out of the game (today's while picks are open, else the next one)."""
+        if self.s.chat_id and str(chat_id) != str(self.s.chat_id):
+            return "Only the main group can change the game.", None
+        day, live = self.select_target(now)
+        chosen = self.select_lines(day, live)
+        key = day.strftime("%Y%m%d")
+        buttons = [(("✅ " if t in chosen else "") + self.label({"ticker": t}).split(" · ")[0], f"g|{key}|{t}")
+                   for t in ETF_POOL]
+        rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [[("✔️ Done", f"g|{key}|done")]]
+        which = "tonight's game (it changes right away)" if live else f"the game on {day:%a %d %b}"
+        auto = "" if chosen or live else " Nothing chosen yet, so the game picks 5 by itself."
+        text = (f"🎛 <b>Choose industries</b> for {which}. Tap to add ✅ or remove.{auto}"
+                + (f"\n{note}" if note else ""))
+        return text, rows
+
+    def on_select(self, data: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None):
+        """A tap in the /select menu: (toast, new menu text or None, new menu buttons or None)."""
+        if self.s.chat_id and str(chat_id) != str(self.s.chat_id):
+            return "Only the main group can change the game.", None, None
+        try:
+            _, d, ticker = data.split("|")
+        except ValueError:
+            return "Unknown button.", None, None
+        day, live = self.select_target(now)
+        if d != day.strftime("%Y%m%d"):
+            text, rows = self.select_menu(now, chat_id, "(The game moved on: this is the current one.)")
+            return "This menu was for an earlier game.", text, rows
+        if ticker == "done":
+            chosen = self.select_lines(day, live)
+            names = ", ".join(self.label({"ticker": t}).split(" · ")[0] for t in chosen) or "the game's own choice"
+            return "Done.", f"🎛 Industries for {'tonight' if live else f'{day:%a %d %b}'}: {esc(names)}", None
+        chosen = self.select_lines(day, live)
+        key = day.isoformat()
+        if ticker in chosen:
+            if live and len(chosen) == 1:
+                return "The game needs at least one line.", None, None
+            if live:
+                self.store.remove_stock(key, ticker)
+            else:
+                self.store.set(f"preset:{key}", json.dumps([t for t in chosen if t != ticker]))
+            toast = f"Removed {self.label({'ticker': ticker}).split(' · ')[0]}."
+        else:
+            if len(chosen) >= SET_MAX:
+                return f"That's the most lines a game can have ({SET_MAX}).", None, None
+            if live:
+                try:
+                    info = self.quotes([ticker]).get(ticker) or {}
+                except Exception:
+                    info = {}
+                if not info.get("last"):
+                    return "Can't get that price right now. Try again soon.", None, None
+                self.store.add_stock(key, self.make_line(ticker, info, f"🎛 chosen by {name}"))
+                if self.ai_ready():
+                    self.fill_news_lines(key)
+            else:
+                self.store.set(f"preset:{key}", json.dumps(chosen + [ticker]))
+            toast = f"Added {self.label({'ticker': ticker}).split(' · ')[0]}."
+        if live:
+            stocks = self.store.stocks(key)
+            for chat in self.chat_ids():
+                mid = self.store.post_id(key, chat)
+                if mid:
+                    self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
+        text, rows = self.select_menu(now, chat_id)
+        return toast, text, rows
 
     def make_line(self, ticker: str, info: dict, note: str = "") -> dict:
         """A game line for a ticker: name, latest close, early price, headlines and the AI's hidden pick."""
@@ -1366,6 +1452,8 @@ class Game:
             return self.extra_command(cmd[1:], arg, chat_id), None
         if cmd == "/pick":
             return self.own_command(parts[1] if len(parts) > 1 else "", now)
+        if cmd in ("/select", "/industries"):
+            return self.select_menu(now, chat_id)
         if cmd == "/set":
             return self.set_command(parts[1:], user_id, name, now, chat_id), None
         if cmd == "/add":

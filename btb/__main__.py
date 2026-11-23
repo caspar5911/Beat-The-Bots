@@ -69,6 +69,13 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
             tg.answer(cq["id"], "This game is played in its Telegram group.")
             return
         data = cq.get("data", "")
+        if data.startswith("g|"):  # /select menu: toggle an industry, then redraw the menu
+            toast, text, rows = game.on_select(data, int(user.get("id", -1)), display_name(user), now, int(chat["id"]))
+            tg.answer(cq["id"], toast)
+            mid = (cq.get("message") or {}).get("message_id")
+            if text and mid:
+                game.edit(int(chat["id"]), mid, text, rows)
+            return
         if data.startswith("x|"):  # 📊 More: details in the player's private chat with the bot
             game.store.player(int(user["id"]), display_name(user))
             game.store.member(int(chat["id"]), int(user["id"]))
