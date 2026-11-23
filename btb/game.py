@@ -869,38 +869,42 @@ class Game:
                 if c["UP"] != c["DOWN"]}
 
     def lock_text(self, day: dt.date, stocks: list[dict], voters: int, chat_id: int | None = None) -> str:
-        """Picks closed: per line who picked what (counts when many), the AI's pick and short reason, and where the
-        AI goes against the group."""
+        """Picks closed: per line a numbered list of who picked what (the AI numbered last, with its reason under
+        it; counts instead of names when many played), then where the AI goes against the group."""
         key = day.isoformat()
         members = self.store.members(chat_id) if chat_id is not None else None
         votes = [v for v in self.store.votes(key)
                  if v["user_id"] != BOT_ID and (members is None or v["user_id"] in members)]
         crowd = self.crowd(key, chat_id)
-        lines = [f"🔒 <b>Picks closed</b> · {day:%a %d %b} · {voters} player{'s' if voters != 1 else ''}"]
+        lines = [f"🔒 <b>Picks closed</b> · {day:%a %d %b}",
+                 f"👥 {voters} player{'s' if voters != 1 else ''} + 🤖 {esc(self.short)}"]
         against = []
         for s in stocks:
             m = pre_move(s)
-            lines += ["", f"<b>{esc(self.label({'ticker': s['ticker'], 'name': s['name']}).split(' · ')[0])}</b>"
-                          + (f" · {m:+.1%} before the open" if m is not None else "")]
+            name = self.label({"ticker": s["ticker"], "name": s["name"]}).split(" · ")[0]
+            lines += ["", f"<b>{esc(name)}</b>" + (f" ({m:+.1%} before the open)" if m is not None else "")]
             mine = [v for v in votes if v["ticker"] == s["ticker"]]
-            if not mine:
-                lines.append("👥 nobody picked")
-            elif len(mine) <= 8:
-                lines += [f"{i}. {esc(v['name'])} · {pick_words(v['call'], v.get('conf'))}" for i, v in enumerate(mine, 1)]
-            else:
+            n = 0
+            if len(mine) > 8:
                 up = sum(v["call"] == "UP" for v in mine)
-                lines.append(f"👥 ⬆️ {up} · ⬇️ {len(mine) - up}")
+                lines.append(f"👥 {len(mine)} players: ⬆️ {up} up · ⬇️ {len(mine) - up} down")
+            else:
+                for n, v in enumerate(mine, 1):
+                    lines.append(f"{n}. {esc(v['name'])}: {pick_words(v['call'], v.get('conf'))}")
+                if not mine:
+                    lines.append("Nobody picked this one.")
             if s["ai_call"]:
                 conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
+                num = f"{n + 1}. " if len(mine) <= 8 else ""
+                lines.append(f"{num}🤖 {esc(self.short)}: {pick_words(s['ai_call'], conf)}, "
+                             f"{(s['ai_conf'] or 0.5):.0%} sure")
                 reason = (s["ai_reason"] or "").strip()
-                lines.append(f"🤖 <b>{esc(self.short)}</b> · {pick_words(s['ai_call'], conf)} "
-                             f"({(s['ai_conf'] or 0.5):.0%} sure)")
                 if reason:
-                    lines.append(f"💬 <i>“{esc(reason)}”</i>")
+                    lines.append(f"<i>“{esc(reason)}”</i>")
                 if s["ticker"] in crowd and crowd[s["ticker"]] != s["ai_call"]:
-                    against.append(self.label({"ticker": s["ticker"], "name": s["name"]}).split(" · ")[0].split(" ", 1)[-1])
+                    against.append(name.split(" ", 1)[-1])
             else:
-                lines.append(f"🤖 {esc(self.short)} 💤 didn't play (AI not working)")
+                lines.append(f"🤖 {esc(self.short)} didn't play this one (AI not working).")
         lines.append("")
         if against:
             lines.append(f"⚔️ {esc(self.short)} is going <b>against the group</b> on {esc(', '.join(against))}!")
@@ -908,9 +912,9 @@ class Game:
             lines.append(f"🤝 {esc(self.short)} agrees with the group tonight. Can't all be right… or can you?")
         mid = at(day, MIDGAME)
         if mid <= close_at(day) - MIDGAME_LATEST and chat_id is not None and self.extra_on("halfway", chat_id):
-            lines.append(f"Halfway update at {_sg(mid)}, results at {_sg(close_at(day) + SETTLE_DELAY)} (Singapore).")
+            lines.append(f"⏰ Halfway update at {_sg(mid)}, results at {_sg(close_at(day) + SETTLE_DELAY)} (Singapore).")
         else:
-            lines.append(f"Results at {_sg(close_at(day) + SETTLE_DELAY)} (Singapore).")
+            lines.append(f"⏰ Results at {_sg(close_at(day) + SETTLE_DELAY)} (Singapore).")
         return "\n".join(lines)
 
     def results_text(self, day: dt.date, chat_id: int | None = None, banter: str = "") -> str:
