@@ -86,6 +86,14 @@ class Telegram:
             raise Forbidden(res.get("description", ""))
         return (res.get("result") or {}).get("message_id")
 
+    def set_commands(self, commands: list[tuple[str, str]]) -> bool:
+        """The menu shown when typing / (for private chats and for all groups)."""
+        cmds = [{"command": c, "description": d} for c, d in commands]
+        ok = True
+        for scope in ({"type": "default"}, {"type": "all_group_chats"}):
+            ok &= bool(self.call("setMyCommands", commands=cmds, scope=scope).get("ok"))
+        return ok
+
     def leave(self, chat_id) -> None:
         self.call("leaveChat", chat_id=chat_id)
 

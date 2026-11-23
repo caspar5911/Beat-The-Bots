@@ -50,6 +50,11 @@ PRACTICE_SECONDS = 120
 PRACTICE_COOLDOWN = dt.timedelta(minutes=10)  # per group, from the start of its last practice
 PRACTICE_AI_PER_HOUR = 6                       # across groups: the model is shared with other work
 
+COMMANDS = [("today", "Today's round"), ("board", "Leaderboard"), ("me", "Your score and streak"),
+            ("card", "Your weekly scorecard picture"), ("bot", "The AI's record and worst calls"),
+            ("practice", "A quick 2-minute game, anytime"), ("league", "Groups vs groups (/league join)"),
+            ("help", "How to play")]
+
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
 DISCLAIMER = "<i>Just a game: not investment advice, no money involved.</i>"
 

@@ -778,3 +778,28 @@ def test_send_raises_with_telegram_reason():
 
     with pytest.raises(RuntimeError, match="chat not found"):
         Telegram("t", "1", session=Session()).send("x")
+
+
+def test_command_menu():
+    from btb.telegram import Telegram
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json=None, timeout=None):
+            self.calls.append((url.rsplit("/", 1)[1], json))
+
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"ok": True}
+            return R()
+
+    sess = Session()
+    assert Telegram("t", "1", session=sess).set_commands(g.COMMANDS)
+    assert [c[0] for c in sess.calls] == ["setMyCommands"] * 2
+    assert {c[1]["scope"]["type"] for c in sess.calls} == {"default", "all_group_chats"}
+    names = [c["command"] for c in sess.calls[0][1]["commands"]]
+    assert all(n.islower() and len(n) <= 32 for n in names) and "practice" in names

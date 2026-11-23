@@ -107,6 +107,11 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
     store, tg = Store(s.db_path, s.bot_name, home_chat=s.chat_id or None), Telegram(s.telegram_token, s.chat_id)
     game = make_game(s, store, tg)
     game.log = log
+    try:
+        from .game import COMMANDS
+        log("command menu registered" if tg.set_commands(COMMANDS) else "command menu NOT registered")
+    except Exception as e:
+        log(f"command menu failed: {e!r}"[:300])
     offset = int(store.get("tg_offset", "0") or 0)
     last_tick = 0.0
     print(f"{s.game_name} running in {len(store.chats())} group(s).", flush=True)
