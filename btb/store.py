@@ -50,7 +50,7 @@ MIGRATIONS = [("stocks", "ai_conf", "REAL"), ("stocks", "ai_double", "INTEGER NO
               ("votes", "double", "INTEGER NOT NULL DEFAULT 0"), ("rounds", "mover", "TEXT"),
               ("rounds", "ai_mover", "TEXT"), ("rounds", "ai_mover_reason", "TEXT NOT NULL DEFAULT ''"),
               ("votes", "conf", "TEXT"), ("stocks", "why", "TEXT"), ("rounds", "lesson", "TEXT"),
-              ("stocks", "note", "TEXT NOT NULL DEFAULT ''")]
+              ("stocks", "note", "TEXT NOT NULL DEFAULT ''"), ("stocks", "news_line", "TEXT")]
 
 # Confidence picks: (points if right, points if wrong). The costs make "sure" pay only when you are right more
 # than 11/16 = 69% of the time, and "lean" more than 4/7 = 57%: overconfidence loses, an honest skip scores 0.

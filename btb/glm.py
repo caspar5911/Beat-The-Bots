@@ -7,9 +7,10 @@ import time
 import requests
 
 from .config import Settings
+from .market import ref_close
 
 SYSTEM = """You are "{bot}", a cocky but honest AI playing a daily stock game against humans.
-For ONE US stock or industry fund (ETF) you get the previous close, the pre-market price and recent headlines.
+For ONE US stock or industry fund (ETF) you get the last close, the pre-market price and recent headlines.
 Predict whether TODAY's regular-session CLOSE will be ABOVE (UP) or BELOW (DOWN) today's OPEN price.
 Note: the opening gap is already priced in at the open; you are calling the move from open to close.
 Be balanced: roughly half of open-to-close moves are DOWN. Gaps fade about as often as they run, so call
@@ -64,7 +65,7 @@ def parse_call(content: str) -> tuple[str, str, float] | None:
 
 def prompt(ticker: str, name: str, quote: dict, news: list[dict]) -> str:
     lines = [f"STOCK: {ticker} ({name})",
-             f"PREVIOUS CLOSE: {quote.get('prev_close')}", f"PRE-MARKET PRICE: {quote.get('pre_price') or 'n/a'}",
+             f"LAST CLOSE: {ref_close(quote)}", f"PRE-MARKET PRICE: {quote.get('pre_price') or 'n/a'}",
              "HEADLINES (newest first):"]
     for n in news or []:
         when = n["published"].strftime("%Y-%m-%d %H:%M UTC") if n.get("published") else "time unknown"
@@ -193,3 +194,16 @@ def why(s: Settings, stocks: list[dict], session=None) -> dict[str, str]:
     if not isinstance(data, dict):
         return {}
     return {str(k).upper(): str(v)[:180] for k, v in data.items() if isinstance(v, str)}
+
+
+NEWS_LINE = """In at most 90 characters of simple everyday English, say what is happening with the company or industry
+below, using only the headlines given. Stay neutral: never say or hint whether the price will go up or down, and
+give no advice. If the headlines are empty or unrelated, answer exactly: No big news today.
+Plain text only, one line."""
+
+
+def news_line(s: Settings, name: str, headlines: list[str], session=None) -> str | None:
+    if not headlines:
+        return "No big news today."
+    text = _text(s, NEWS_LINE, f"{name}\n" + "\n".join(f"- {h}" for h in headlines[:6]), session, timeout=60)
+    return text.strip().strip('"').splitlines()[0][:110] if text else None

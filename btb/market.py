@@ -75,8 +75,23 @@ def parse_snapshot(rows: list[dict]) -> dict:
         t = str(r.get("code", "")).replace("US.", "")
         out[t] = {"name": str(r.get("name") or t), "open": _num(r.get("open_price")),
                   "last": _num(r.get("last_price")), "prev_close": _num(r.get("prev_close_price")),
-                  "pre_price": _num(r.get("pre_price")), "update_time": _time(r.get("update_time"))}
+                  "pre_price": _num(r.get("pre_price")), "update_time": _time(r.get("update_time")),
+                  "high52": _num(r.get("highest52weeks_price")), "low52": _num(r.get("lowest52weeks_price"))}
     return out
+
+
+def ref_close(q: dict | None, today: dt.date | None = None) -> float | None:
+    """The latest regular-session close. Moomoo's prev_close is the close BEFORE the last traded session: once that
+    session is over (its last trade is from an earlier day, or at/near its close), the latest close is last_price."""
+    if not q:
+        return None
+    ut = q.get("update_time")
+    today = today or dt.datetime.now(NY).date()
+    if ut and q.get("last"):
+        closed = dt.datetime.combine(ut.date(), close_time(ut.date())) - dt.timedelta(minutes=1)
+        if ut.date() < today or ut.replace(tzinfo=None) >= closed:
+            return q["last"]
+    return q.get("prev_close")
 
 
 def session_prices(day: dt.date, q: dict | None) -> tuple[float | None, float | None]:

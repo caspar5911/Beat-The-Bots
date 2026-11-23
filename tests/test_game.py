@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 import pytest
 
@@ -50,9 +51,9 @@ class FakeQuotes:
     def __init__(self):
         self.rows, self.fail = {}, False
 
-    def set(self, t, open_=None, last=None, prev_close=100.0, pre=101.0, when=None):
+    def set(self, t, open_=None, last=None, prev_close=100.0, pre=101.0, when=None, high52=None, low52=None):
         self.rows[t] = {"name": f"{t} Inc", "open": open_, "last": last, "prev_close": prev_close,
-                        "pre_price": pre, "update_time": when}
+                        "pre_price": pre, "update_time": when, "high52": high52, "low52": low52}
 
     def __call__(self, tickers):
         if self.fail:
@@ -1157,3 +1158,63 @@ def test_add_before_the_game_is_out_counts_as_suggestion():
     q.set("NVDA", last=180.0, prev_close=176.0, when=ny(DAY - dt.timedelta(days=3), 16))
     reply = game.on_command("/add NVDA", 7, "Ann", ny(DAY, 6))[0]
     assert "suggested <b>NVDA</b>" in reply and "counts as a suggestion" in reply
+
+
+
+def test_info_popup_before_the_open():
+    game, store, tg, q, calls, clock = make()
+    game.summarize = lambda name, heads: "Big banks slip as hopes for rate cuts fade"
+    ts = full_day(game, store, tg, q, clock)
+    t = ts[0]
+    q.set(t, last=50.4, prev_close=50.0, pre=50.15, when=ny(DAY - dt.timedelta(days=3), 16), high52=51.0, low52=35.0)
+    q.set("SPY", last=600.0, prev_close=598.0, pre=597.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    pop = game.on_button(b[0][0][1], 7, "Ann", ny(DAY, 8, 30))
+    assert len(pop) <= 200 and f"({t})" in pop.splitlines()[0]
+    assert "Inside: " + g.ETF_LABEL[t].split(" (", 1)[1].rstrip(")") in pop
+    assert "Before the open: -0.5% (whole market -0.5%)" in pop                # against the LATEST close (50.40)
+    assert "Yesterday: +0.8% · near its highest this year" in pop
+    assert "News: Big banks slip as hopes for rate cuts fade" in pop
+    q.fail = True                                                              # cached for a minute: no new fetch
+    assert game.on_button(b[0][0][1], 8, "Ben", ny(DAY, 8, 30, 30)) == pop
+    assert "News:" in game.on_button(b[2][0][1], 8, "Ben", ny(DAY, 8, 30, 30))            # fails soft
+
+
+def test_info_popup_during_the_session_and_fallback_news():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    t = ts[1]
+    store.update_stock(DAY.isoformat(), t, headlines=json.dumps([{"title": "Thị trường chứng khoán giảm mạnh - Laodong", "published": None}]))
+    q.set(t, open_=100.0, last=102.0, prev_close=100.0, when=ny(DAY, 11), high52=150.0, low52=90.0)
+    q.set("SPY", open_=600.0, last=603.0, prev_close=600.0, when=ny(DAY, 11))
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    pop = game.on_button(b[2][0][1], 7, "Ann", ny(DAY, 11))
+    assert "Today so far: +2.0% (whole market +0.5%)" in pop and "News: No big news today." in pop
+    assert g.clean_headline("Oil jumps as OPEC cuts - Reuters") == "Oil jumps as OPEC cuts"
+    assert g.Game.year_position({"high52": 150.0, "low52": 90.0, "last": 120.0}) == " · 20% below its 1-year high"
+    assert g.Game.year_position({"high52": 150.0, "low52": 90.0, "last": 91.0}) == " · near its lowest this year"
+
+
+def test_news_lines_written_when_the_game_is_made():
+    seen = []
+    game, store, tg, q, calls, clock = make()
+    game.summarize = lambda name, heads: seen.append(name) or f"{name}: calm day"
+    full_day(game, store, tg, q, clock)
+    assert len(seen) == 3 and all(s["news_line"].endswith("calm day") for s in store.stocks(DAY.isoformat()))
+    game.refresh_open_rounds()                                                 # already written: not asked again
+    assert len(seen) == 3
+
+
+
+def test_moves_before_the_open_use_the_latest_close():
+    from btb import market
+    friday_close = {"last": 342.56, "prev_close": 349.21, "pre_price": 348.39,
+                    "update_time": dt.datetime(2026, 11, 20, 16, 0, tzinfo=NY)}   # Monday pre-market snapshot
+    assert market.ref_close(friday_close, DAY) == 342.56
+    assert round(g.pre_move(friday_close, DAY), 4) == round(348.39 / 342.56 - 1, 4)  # +1.7%, not -0.2%
+    one_second_early = dict(friday_close, update_time=dt.datetime(2026, 11, 20, 15, 59, 59, tzinfo=NY))
+    assert market.ref_close(one_second_early, DAY) == 342.56                         # an earlier day: session over
+    intraday = dict(friday_close, update_time=dt.datetime(2026, 11, 23, 11, 0, tzinfo=NY))
+    assert market.ref_close(intraday, DAY) == 349.21                                # during a session: prev_close
+    half_day = dict(friday_close, update_time=dt.datetime(2026, 11, 27, 13, 0, tzinfo=NY))
+    assert market.ref_close(half_day, dt.date(2026, 11, 27)) == 342.56

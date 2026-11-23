@@ -27,7 +27,8 @@ def make_game(s: Settings, store: Store, tg, clock=None) -> Game:
                 call_ai=lambda t, name, q, h: glm.call_stock(s, t, name, q, h),
                 ai_ready=lambda: glm.healthy(s), banter=lambda summary: glm.banter(s, summary),
                 call_mover=lambda stocks: glm.call_mover(s, stocks), clock=clock,
-                explain=lambda rows: glm.why(s, rows), teach=lambda summary: glm.lesson(s, summary))
+                explain=lambda rows: glm.why(s, rows), teach=lambda summary: glm.lesson(s, summary),
+                summarize=lambda name, heads: glm.news_line(s, name, heads))
 
 
 GROUPS = ("group", "supergroup")

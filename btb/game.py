@@ -153,9 +153,11 @@ def pick_tickers(day: dt.date, n: int, pool=ETF_POOL, sector=ETF_GROUP) -> list[
     return pick_stocks(day, n, {}, pool, sector=sector)
 
 
-def pre_move(q: dict | None) -> float | None:
-    if q and q.get("pre_price") and q.get("prev_close"):
-        return q["pre_price"] / q["prev_close"] - 1
+def pre_move(q: dict | None, today: dt.date | None = None) -> float | None:
+    """Move before the open, against the latest close (stored game lines keep that close as prev_close)."""
+    base = market.ref_close(q, today)
+    if q and q.get("pre_price") and base:
+        return q["pre_price"] / base - 1
     return None
 
 
@@ -164,7 +166,7 @@ def pick_stocks(day: dt.date, n: int, quotes: dict, pool=ETF_POOL, movers: int =
     never two from the same industry, in shuffled order."""
     rng = random.Random(day.isoformat())
     picks, used = [], set()
-    moved = sorted((t for t in pool if pre_move(quotes.get(t)) is not None), key=lambda t: -abs(pre_move(quotes[t])))
+    moved = sorted((t for t in pool if pre_move(quotes.get(t), day) is not None), key=lambda t: -abs(pre_move(quotes[t], day)))
     for t in moved:
         if len(picks) >= min(movers, n):
             break
@@ -279,6 +281,15 @@ def fallback_lesson(stocks: list[dict], split: dict) -> str:
     return LESSONS[day % len(LESSONS)]
 
 
+def clean_headline(title: str) -> str:
+    """A raw headline without the ' - Publisher' tail; skipped if it's mostly not English letters."""
+    t = re.sub(r"\s+-\s+[^-]+$", "", title or "").strip()
+    letters = [c for c in t if c.isalpha()]
+    if not t or (letters and sum(c.isascii() for c in letters) / len(letters) < 0.8):
+        return "No big news today."
+    return t
+
+
 def help_text(title: str, bot: str) -> str:
     return (f"🎯 <b>{esc(title)}</b>\n"
             "Every US trading day you get 5 industries at 20:30 Singapore time (19:30 in summer), like tech, banks or "
@@ -298,11 +309,12 @@ def help_text(title: str, bot: str) -> str:
 
 class Game:
     def __init__(self, settings, store: Store, tg, quotes, news, call_ai, ai_ready, banter=None, call_mover=None,
-                 cards=None, log=print, clock=None, explain=None, teach=None):
+                 cards=None, log=print, clock=None, explain=None, teach=None, summarize=None):
         self.s, self.store, self.tg = settings, store, tg
         self.quotes, self.news, self.call_ai, self.ai_ready = quotes, news, call_ai, ai_ready
         self.banter, self.call_mover, self.log = banter, call_mover, log
-        self.explain, self.teach = explain, teach
+        self.explain, self.teach, self.summarize = explain, teach, summarize
+        self._live: dict[str, tuple[dt.datetime, dict]] = {}
         if cards is None:
             from . import cards as cards_module
             cards = cards_module
@@ -382,7 +394,7 @@ class Game:
         if not info or not info.get("last"):
             return f"I can't find {esc(ticker)}. Check the ticker (like AAPL or NVDA) and try again.", None
         s = {"ticker": ticker, "name": ETF_LABEL.get(ticker) or info.get("name") or ticker,
-             "prev_close": info.get("prev_close"), "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "",
+             "prev_close": market.ref_close(info, ny.date()), "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "",
              "ai_conf": None, "note": f"{ADDED}{name}"}
         try:
             heads = self.news(ticker, s["name"])
@@ -396,6 +408,8 @@ class Game:
                           for h in heads]
         self.store.player(user_id, name)
         self.store.add_stock(key, s)
+        if self.ai_ready():
+            self.fill_news_lines(key)
         day, stocks = ny.date(), self.store.stocks(key)
         for chat in self.chat_ids():
             mid = self.store.post_id(key, chat)
@@ -435,21 +449,84 @@ class Game:
         rows.append([("👀 My picks", f"k|{key}")])
         return rows
 
-    def on_info(self, data: str) -> str:
-        """Private pop-up about one line of the game: what's in it, its early move, the top headline."""
+    def live(self, tickers: list[str], now: dt.datetime | None = None, ttl: int = 60) -> dict:
+        """Quotes cached for a minute, so many taps on a name don't flood the price feed."""
+        now = now or dt.datetime.now(dt.timezone.utc)
+        need = [t for t in tickers if t not in self._live or (now - self._live[t][0]).total_seconds() > ttl]
+        if need:
+            try:
+                got = self.quotes(need)
+            except Exception as e:
+                self.log(f"info quotes failed: {e!r}"[:300])
+                got = {}
+            for t in need:
+                if t in got:
+                    self._live[t] = (now, got[t])
+        return {t: self._live[t][1] for t in tickers if t in self._live}
+
+    def on_info(self, data: str, now: dt.datetime | None = None) -> str:
+        """Private pop-up (max 200 characters) about one line of the game: what it is, its move before the open
+        against the whole market, yesterday and where it sits in its year, and a neutral one-line news summary."""
         try:
             _, d, ticker = data.split("|")
-            key = dt.datetime.strptime(d, "%Y%m%d").date().isoformat()
+            day = dt.datetime.strptime(d, "%Y%m%d").date()
         except ValueError:
             return "Unknown button."
-        s = next((s for s in self.store.stocks(key) if s["ticker"] == ticker), None)
+        s = next((s for s in self.store.stocks(day.isoformat()) if s["ticker"] == ticker), None)
         if not s:
             return "That game is over."
-        lines = [f"{ticker}: {s['name']}", f"Before the open: {_move(s).replace(' before the market opened', '')}"]
-        if s["headlines"]:
-            lines.append(f"News: {s['headlines'][0]['title']}")
-        lines.append("Tap ⬆️ Up / ⬇️ Down, or ⏫ / ⏬ if very sure.")
-        return "\n".join(lines)[:200]
+        now = now or dt.datetime.now(dt.timezone.utc)
+        q = self.live([ticker, "SPY"], now)
+        info, spy = q.get(ticker) or {}, q.get("SPY") or {}
+        lines = [self.label(s).rsplit(" · ", 1)[0] + f" ({ticker})"]
+        if ticker in ETF_LABEL and " (" in ETF_LABEL[ticker]:
+            lines.append("Inside: " + ETF_LABEL[ticker].split(" (", 1)[1].rstrip(")"))
+        elif ticker in SECTOR:
+            lines.append(f"Industry: {SECTOR[ticker]}")
+        ny = now.astimezone(NY)
+        traded_today = bool(info.get("update_time")) and info["update_time"].date() == ny.date()
+        if traded_today and info.get("last") and info.get("prev_close"):
+            m, mk = info["last"] / info["prev_close"] - 1, (spy["last"] / spy["prev_close"] - 1
+                                                            if spy.get("last") and spy.get("prev_close") else None)
+            lines.append(f"Today so far: {m:+.1%}" + (f" (whole market {mk:+.1%})" if mk is not None else ""))
+        else:
+            m = pre_move(info, ny.date()) if info else pre_move(s)
+            mk = pre_move(spy, ny.date())
+            if m is not None:
+                lines.append(f"Before the open: {m:+.1%}" + (f" (whole market {mk:+.1%})" if mk is not None else ""))
+            if info.get("last") and info.get("prev_close"):
+                y = info["last"] / info["prev_close"] - 1
+                lines.append(f"Yesterday: {y:+.1%}" + self.year_position(info))
+        news = s.get("news_line") or clean_headline(s["headlines"][0]["title"] if s["headlines"] else "")
+        text = "\n".join(lines)
+        room = 200 - len(text) - len("\nNews: ")
+        return text + (f"\nNews: {news[:room - 1] + '…' if len(news) > room else news}" if room > 20 else "")
+
+    @staticmethod
+    def year_position(info: dict) -> str:
+        hi, lo, last = info.get("high52"), info.get("low52"), info.get("last")
+        if not (hi and lo and last) or hi <= lo:
+            return ""
+        if last >= hi * 0.97:
+            return " · near its highest this year"
+        if last <= lo * 1.03:
+            return " · near its lowest this year"
+        return f" · {1 - last / hi:.0%} below its 1-year high"
+
+    def fill_news_lines(self, key: str) -> None:
+        """A neutral one-line news summary per line of an open game (Ah Huat writes it; the pick stays hidden)."""
+        if not self.summarize:
+            return
+        for s in self.store.stocks(key):
+            if s.get("news_line"):
+                continue
+            try:
+                line = self.summarize(s["name"], [h["title"] for h in s["headlines"]])
+            except Exception as e:
+                self.log(f"news line failed: {e!r}"[:300])
+                line = None
+            if line:
+                self.store.update_stock(key, s["ticker"], news_line=line)
 
     def split(self, key: str, chat_id: int | None) -> dict[str, dict[str, int]]:
         """{ticker: {"UP": n, "DOWN": n}} among the group's human players."""
@@ -660,7 +737,7 @@ class Game:
         stocks = []
         for t in tickers:
             info = q.get(t, {})
-            s = {"ticker": t, "name": ETF_LABEL.get(t) or info.get("name") or t, "prev_close": info.get("prev_close"),
+            s = {"ticker": t, "name": ETF_LABEL.get(t) or info.get("name") or t, "prev_close": market.ref_close(info, day),
                  "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "", "ai_conf": None,
                  "note": notes.get(t, "")}
             s["headlines"] = [{"title": h["title"], "published": h["published"]} for h in self.news(t, s["name"])]
@@ -674,6 +751,8 @@ class Game:
             s["headlines"] = [{"title": h["title"], "published": h["published"].isoformat() if h.get("published") else None}
                               for h in s["headlines"]]
         self.store.add_round(day.isoformat(), stocks, now.isoformat(), ai_mover)
+        if ready:
+            self.fill_news_lines(day.isoformat())
         for chat in self.chat_ids():
             self._tried[("post", f"{day.isoformat()}:{chat}")] = now.astimezone(NY)
             self.post(day, chat)
@@ -684,7 +763,19 @@ class Game:
         for r in self.store.db.execute("SELECT day FROM rounds WHERE status='open'").fetchall():
             self.store.db.execute("UPDATE votes SET conf='lean', double=0 WHERE day=? AND conf IS NULL", (r["day"],))
             self.store.db.commit()
-            day, stocks = dt.date.fromisoformat(r["day"]), self.store.stocks(r["day"])
+            day = dt.date.fromisoformat(r["day"])
+            if dt.datetime.now(dt.timezone.utc) < lock_at(day):  # before the open: latest close and early price
+                try:
+                    q = self.quotes([s["ticker"] for s in self.store.stocks(r["day"])])
+                    for t, info in q.items():
+                        if market.ref_close(info, day):
+                            self.store.update_stock(r["day"], t, prev_close=market.ref_close(info, day),
+                                                    pre_price=info.get("pre_price"))
+                except Exception as e:
+                    self.log(f"open round price refresh failed: {e!r}"[:300])
+            if self.ai_ready():
+                self.fill_news_lines(r["day"])
+            stocks = self.store.stocks(r["day"])
             for chat in self.chat_ids():
                 mid = self.store.post_id(r["day"], chat)
                 if mid:
@@ -965,7 +1056,7 @@ class Game:
         if data.startswith("k|"):
             return self.my_picks(data, user_id)
         if data.startswith("i|"):
-            return self.on_info(data)
+            return self.on_info(data, now)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
         if data.startswith("o|"):
