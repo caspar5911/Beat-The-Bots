@@ -89,7 +89,7 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
 
 class Printer:
     """Stands in for Telegram in the demo."""
-    def send(self, text, buttons=None, chat_id=None):
+    def send(self, text, buttons=None, chat_id=None, silent=None):
         from .telegram import plain
         print(plain(text))
         if buttons:

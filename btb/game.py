@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import json
 import random
 
 from . import market
@@ -37,6 +38,9 @@ GIVE_UP = dt.timedelta(days=4)    # unresolved stocks are voided after this
 ACTIVE_DAYS = 14                  # players who voted this recently get the reminder
 STREAK_SHOW = 3
 MIN_TITLE_PICKS = 3
+
+PRACTICE_STOCKS = 3
+PRACTICE_SECONDS = 120
 
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
 DISCLAIMER = "<i>Just a game: not investment advice, no money involved.</i>"
@@ -124,7 +128,8 @@ def help_text(title: str, bot: str) -> str:
             "price, ⬇️ if below. Tap 🎯 x2 on your surest pick to double it: +2 if right, −1 if wrong. "
             f"You can change your mind until the 09:30 New York open. {esc(bot)} (our own AI) plays too.\n"
             "Halftime scores around midnight, results before breakfast, titles every Friday.\n\n"
-            "/today: today's round · /board: leaderboard · /me: your record\n" + DISCLAIMER)
+            "/today: today's round · /board: leaderboard · /me: your record · "
+            "/practice: a quick 2-minute round anytime (not scored)\n" + DISCLAIMER)
 
 
 class Game:
@@ -257,6 +262,7 @@ class Game:
         if (market.is_trading_day(day) and self.store.round(day.isoformat()) is None
                 and POST_AT <= ny.time() < LAST_POST):
             self.create(day, now)
+        self.practice_reveal(now)
 
     def _due(self, what: str, key: str, ny: dt.datetime) -> bool:
         """Space out retries that hit OpenD."""
@@ -395,7 +401,7 @@ class Game:
                 lines.append(f"🤖 {esc(self.short)} is losing 😬" if max(humans) > bot[1]
                              else f"🤖 {esc(self.short)} is leading 😎" if max(humans) < bot[1]
                              else f"🤖 Neck and neck with {esc(self.short)} 😤")
-        self.tg.send("\n".join(lines), None)
+        self.tg.send("\n".join(lines), None, silent=False)  # around midnight Singapore: the point is to ping
         self.store.set(f"halftime:{key}", "posted")
 
     def settle(self, day: dt.date, ny: dt.datetime) -> None:
@@ -461,6 +467,8 @@ class Game:
         return (day, key, ticker, parts), ""
 
     def on_button(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
+        if data.startswith("p|"):
+            return self.practice_vote(data, user_id, name, now)
         if data.startswith("d|"):
             return self.on_double(data, user_id, name, now)
         return self.on_vote(data, user_id, name, now)
@@ -497,6 +505,8 @@ class Game:
         ny = now.astimezone(NY)
         if cmd in ("/start", "/help"):
             return self.help_text(), None
+        if cmd == "/practice":
+            return self.practice_start(now)
         if cmd == "/today":
             row = self.store.db.execute("SELECT day FROM rounds ORDER BY day DESC LIMIT 1").fetchone()
             if not row:
@@ -528,3 +538,102 @@ class Game:
             return (f"{esc(name)}: {pts(mine['points'])} · {mine['correct']}/{mine['played']} correct "
                     f"({mine['correct'] / mine['played']:.0%}) · 🔥 {streak} in a row{vs}"), None
         return None
+
+
+    # ---------------------------------------------------------------- practice
+    # A 2-minute unscored round on the last COMPLETED session (or today's move so far while the market is open),
+    # whose answer is already in the quote snapshot. It exercises buttons, the AI and results in the real group
+    # at any hour. State lives in kv as JSON; it never touches rounds, votes or scores.
+
+    def _practice(self) -> dict | None:
+        raw = self.store.get("practice")
+        return json.loads(raw) if raw else None
+
+    def practice_start(self, now: dt.datetime) -> tuple[str, list | None]:
+        p = self._practice()
+        if p and now < dt.datetime.fromisoformat(p["ends"]) + dt.timedelta(minutes=5):
+            return "A practice round is already running: tap the buttons above.", None
+        rng = random.Random(now.isoformat())
+        tickers = rng.sample(POOL, PRACTICE_STOCKS)
+        try:
+            q = self.quotes(tickers)
+        except Exception as e:
+            self.log(f"practice quotes failed: {e!r}"[:300])
+            return "Practice needs live quotes and Moomoo isn't answering right now. Try again in a bit.", None
+        stocks = []
+        for t in tickers:
+            info = q.get(t) or {}
+            ut = info.get("update_time")
+            if not (info.get("open") and info.get("last") and ut):
+                continue
+            live = ut.date() == now.astimezone(NY).date() and ut.time() < market.close_time(ut.date())
+            stocks.append({"ticker": t, "name": info.get("name") or t, "open": info["open"], "close": info["last"],
+                           "day": ut.date().isoformat(), "live": live, "ai_call": None, "ai_reason": ""})
+        if not stocks:
+            return "No usable prices for practice right now. Try again in a bit.", None
+        if self.ai_ready():
+            for s in stocks:
+                # Same information as the players: no pre-market price (the snapshot's is from a later session).
+                got = self.call_ai(s["ticker"], s["name"], {"prev_close": (q.get(s["ticker"]) or {}).get("prev_close")}, [])
+                if got:
+                    s["ai_call"], s["ai_reason"] = got[0], got[1]
+        pid = now.strftime("%H%M%S")
+        ends = now + dt.timedelta(seconds=PRACTICE_SECONDS)
+        self.store.set("practice", json.dumps({"id": pid, "ends": ends.isoformat(), "stocks": stocks,
+                                               "votes": {}, "names": {}}))
+        day = dt.date.fromisoformat(stocks[0]["day"])
+        when = "so far today" if stocks[0]["live"] else f"on {day:%a %d %b}"
+        lines = [f"🧪 <b>Practice round</b> (not scored) · answers in {PRACTICE_SECONDS // 60} minutes",
+                 f"Did each stock finish <b>above ⬆️ or below ⬇️ its opening price</b> {when}? No peeking at charts!",
+                 f"{esc(self.bot)} has made its calls too.", ""]
+        lines += [f"<b>{esc(s['ticker'])}</b> {esc(s['name'])}" for s in stocks]
+        buttons = [[(f"⬆️ {s['ticker']}", f"p|{pid}|{s['ticker']}|U"), (f"⬇️ {s['ticker']}", f"p|{pid}|{s['ticker']}|D")]
+                   for s in stocks]
+        return "\n".join(lines), buttons
+
+    def practice_vote(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
+        p = self._practice()
+        try:
+            _, pid, ticker, c = data.split("|")
+        except ValueError:
+            return "Unknown button."
+        if not p or p["id"] != pid or ticker not in {s["ticker"] for s in p["stocks"]} or c not in ("U", "D"):
+            return "That practice round is over. Send /practice for a new one."
+        if now >= dt.datetime.fromisoformat(p["ends"]):
+            return "Time's up: answers coming."
+        call = "UP" if c == "U" else "DOWN"
+        p["votes"].setdefault(str(user_id), {})[ticker] = call
+        p["names"][str(user_id)] = name
+        self.store.set("practice", json.dumps(p))
+        return f"{ticker} {ARROW[call]} saved (practice)."
+
+    def practice_reveal(self, now: dt.datetime) -> None:
+        p = self._practice()
+        if not p or p.get("revealed") or now < dt.datetime.fromisoformat(p["ends"]):
+            return
+        lines = ["🧪 <b>Practice answers</b>"]
+        right: dict[str, int] = {}
+        bot_right = 0
+        for s in p["stocks"]:
+            res = "UP" if s["close"] > s["open"] else "DOWN" if s["close"] < s["open"] else None
+            ai = "" if not s["ai_call"] else (f" · {esc(self.short)} {ARROW[s['ai_call']]} " +
+                                              ("✅" if s["ai_call"] == res else "❌"))
+            bot_right += bool(s["ai_call"] and s["ai_call"] == res)
+            lines.append(f"{ARROW.get(res, '➖')} <b>{esc(s['ticker'])}</b> {s['open']:.2f} → {s['close']:.2f} "
+                         f"({s['close'] / s['open'] - 1:+.1%}){ai}")
+            if s["ai_call"] and s["ai_reason"]:
+                lines.append(f"   <i>{esc(s['ai_reason'])}</i>")
+            for uid, calls in p["votes"].items():
+                right[uid] = right.get(uid, 0) + (calls.get(s["ticker"]) == res)
+        n = len(p["stocks"])
+        if p["votes"]:
+            lines.append("")
+            lines += [f"{esc(p['names'][uid])}: {k}/{n}" for uid, k in sorted(right.items(), key=lambda kv: -kv[1])]
+        else:
+            lines += ["", "Nobody played. Send /practice to try again."]
+        if any(s["ai_call"] for s in p["stocks"]):
+            lines.append(f"{esc(self.bot)}: {bot_right}/{n}")
+        lines.append("The real round posts every US trading day at 21:45 Singapore (20:45 in summer).")
+        self.tg.send("\n".join(lines), None, silent=False)
+        p["revealed"] = True
+        self.store.set("practice", json.dumps(p))

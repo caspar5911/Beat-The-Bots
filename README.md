@@ -20,7 +20,8 @@ Scoring: 1 point per correct call. **Double down** (🎯 x2) on one pick a day: 
 doubles its most confident call. 🔥 marks a run of 3+ correct calls. Weekly titles: 👑 Bot Slayer (top human, if
 they beat the AI) and 🤡 the AI's Snack (bottom human, 3+ picks).
 
-Commands in the group: `/today`, `/board`, `/me`, `/help`. Names are set in `.env` (`BTB_GAME_NAME`,
+Commands in the group: `/today`, `/board`, `/me`, `/help`, and `/practice`: a 2-minute unscored round on the
+last completed session (or today's move so far), playable at any hour; good for checking the setup. Names are set in `.env` (`BTB_GAME_NAME`,
 `BTB_BOT_NAME`; defaults "Huat or Not?" and "🤖 Ah Huat").
 
 The round still runs if the model is down (the Bot sits out), and a missed stage is caught up after a restart.

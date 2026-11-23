@@ -45,9 +45,10 @@ class Telegram:
             return data
         return {}
 
-    def send(self, text: str, buttons=None, chat_id: str | None = None) -> int | None:
+    def send(self, text: str, buttons=None, chat_id: str | None = None, silent: bool | None = None) -> int | None:
+        """silent=None: quiet during the Singapore night only."""
         params = {"chat_id": chat_id or self.chat_id, "text": text, "parse_mode": "HTML",
-                  "disable_web_page_preview": True, "disable_notification": night()}
+                  "disable_web_page_preview": True, "disable_notification": night() if silent is None else silent}
         if buttons:
             params["reply_markup"] = keyboard(buttons)
         res = self.call("sendMessage", **params)

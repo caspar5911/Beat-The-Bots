@@ -16,10 +16,11 @@ def ny(day, h, m=0, s=0):
 
 class FakeTG:
     def __init__(self):
-        self.sent, self.edits, self.answers = [], [], []
+        self.sent, self.edits, self.answers, self.silent = [], [], [], []
 
-    def send(self, text, buttons=None, chat_id=None):
+    def send(self, text, buttons=None, chat_id=None, silent=None):
         self.sent.append((text, buttons))
+        self.silent.append(silent)
         return len(self.sent)
 
     def edit(self, mid, text, buttons=None):
@@ -434,6 +435,7 @@ def test_halftime_live_standings():
     text = tg.sent[-1][0]
     assert "Halftime" in text and "-3.0% since the open" in text and "is losing" in text
     assert "Ann: 3 pts" in text
+    assert tg.silent[-1] is False                                             # halftime pings even at midnight SGT
     game.tick(ny(DAY, 11, 30))
     assert sum(t.startswith("⏱") for t, _ in tg.sent) == 1
 
@@ -509,3 +511,59 @@ def test_old_database_is_migrated(tmp_path):
     store.set_double("2026-11-23", 7, "AAPL")
     assert store.votes("2026-11-23")[0]["double"] == 1
     assert store.db.execute("SELECT name FROM players WHERE user_id=0").fetchone()[0] == "🤖 Ah Huat"
+
+
+def test_send_silent_override():
+    from btb.telegram import Telegram
+
+    class Session:
+        def __init__(self):
+            self.bodies = []
+
+        def post(self, url, json=None, timeout=None):
+            self.bodies.append(json)
+
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"ok": True, "result": {"message_id": 1}}
+            return R()
+
+    sess = Session()
+    Telegram("t", "1", session=sess).send("x", silent=False)
+    Telegram("t", "1", session=sess).send("y", silent=True)
+    assert [b["disable_notification"] for b in sess.bodies] == [False, True]
+
+
+def test_practice_round():
+    game, store, tg, q, calls, clock = make()
+    now = ny(DAY, 20, 0)                                                      # evening: market closed
+    for t in g.POOL:
+        q.set(t, open_=100.0, last=101.0 if t < "M" else 99.0, when=ny(DAY, 16))
+    text, buttons = game.on_command("/practice@HuatOrNotBot", 7, "Ann", now)
+    assert "Practice round" in text and "Mon 23 Nov" in text and len(buttons) == 3
+    assert "already running" in game.on_command("/practice", 7, "Ann", now)[0]
+    picks = []
+    for row in buttons:
+        assert len(row[0][1].encode()) <= 64
+        assert "practice" in game.on_button(row[0][1], 7, "Ann", now + dt.timedelta(seconds=30))
+        picks.append(row[0][0].split()[1])
+    game.tick(now + dt.timedelta(seconds=60))
+    assert not any("Practice answers" in t for t, _ in tg.sent)
+    assert "Time's up" in game.on_button(buttons[0][1][1], 8, "Ben", now + dt.timedelta(seconds=121))
+    game.tick(now + dt.timedelta(seconds=150))
+    res = tg.sent[-1][0]
+    ups = sum(t < "M" for t in picks)
+    assert "Practice answers" in res and f"Ann: {ups}/3" in res and "goes up, humans" in res
+    game.tick(now + dt.timedelta(seconds=200))
+    assert sum("Practice answers" in t for t, _ in tg.sent) == 1
+    assert store.scores() == [] and store.db.execute("SELECT COUNT(*) FROM rounds").fetchone()[0] == 0
+    assert "Practice round" in game.on_command("/practice", 7, "Ann", now + dt.timedelta(minutes=10))[0]
+    assert "over" in game.on_button(buttons[0][0][1], 7, "Ann", now + dt.timedelta(minutes=10))
+
+
+def test_practice_when_quotes_down():
+    game, store, tg, q, calls, clock = make()
+    q.fail = True
+    assert "Moomoo" in game.on_command("/practice", 7, "Ann", ny(DAY, 20))[0]

@@ -102,5 +102,6 @@ def main() -> int:  # pragma: no cover - interactive
     state = subprocess.run(["systemctl", "--user", "is-active", "beat-the-bot.service"],
                            capture_output=True, text=True).stdout.strip()
     print(f"   Service is {state}. Logs: journalctl --user -u beat-the-bot -f")
-    print("\nDone! Rounds post every US trading day at 08:45 New York (21:45 Singapore in winter).")
+    print("\nDone! Send /practice in the group for a 2-minute test round right now.")
+    print("Real rounds post every US trading day at 08:45 New York (21:45 Singapore in winter).")
     return 0 if state == "active" else 1
