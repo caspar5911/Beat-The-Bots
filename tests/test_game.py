@@ -151,7 +151,8 @@ def test_whole_day():
     game.tick(ny(DAY, 9, 30))
     assert store.round(DAY.isoformat())["status"] == "locked"
     lock = tg.sent[-1][0]
-    assert "goes up, humans" in lock and "group ⬆️ 1 · ⬇️ 1" in lock and "think so (50% sure)" in lock
+    assert "goes up, humans" in lock and "👥 Ann ⬇️ · Ben ⬆️" in lock and "🤖 Ah Huat ⬆️ (50% sure)" in lock
+    assert f"⚔️ Ah Huat is going <b>against the group</b>" not in lock          # 1-1 split: no group call
     assert "Too late" in game.on_button(buttons[1][0][1], 8, "Ben", ny(DAY, 9, 30, 1))
     for t in ts:
         q.set(t, open_=100.0, last=100.5, when=ny(DAY, 9, 36))
@@ -427,7 +428,7 @@ def test_ai_confidence_is_shown_and_scored():
     full_day(game, store, tg, q, clock)
     game.tick(ny(DAY, 9, 30))
     lock = tg.sent[-1][0]
-    assert f"<b>{ts[1]}</b> group ⬆️ 0 · ⬇️ 0 · Ah Huat ⏫ very sure (80% sure)" in lock and lock.count("think so (50% sure)") == 2
+    assert "🤖 Ah Huat ⏫ (80% sure)" in lock and lock.count("⬆️ (50% sure)") == 2 and lock.count("nobody picked") == 3
     confs = {v["ticker"]: v["conf"] for v in store.votes(DAY.isoformat()) if v["user_id"] == BOT_ID}
     assert confs == {ts[0]: "lean", ts[1]: "sure", ts[2]: "lean"}
 
@@ -863,7 +864,8 @@ def test_crowd_split_contrarian_and_group_brain():
     for row in b:
         game.on_button(row[1][1], 4, "Rebel", ny(DAY, 9))                     # one says DOWN everywhere
     game.tick(ny(DAY, 9, 30))
-    assert tg.sent[-1][0].count("group ⬆️ 3 · ⬇️ 1") == 3
+    assert tg.sent[-1][0].count("👥 U1 ⬆️ · U2 ⬆️ · U3 ⬆️ · Rebel ⬇️") == 3
+    assert "against the group" not in tg.sent[-1][0] and "agrees with the group" in tg.sent[-1][0]
     settle_day(game, q, ts, DAY, [99.0, 101.0, 101.0])                        # #1 went DOWN
     res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
     assert f"🦅 Right when most people were wrong: Rebel on {ts[0]}" in res
@@ -1144,7 +1146,7 @@ def test_add_a_stock_to_todays_game():
     game.tick(ny(DAY, 9, 20))
     assert "Cat" not in tg.sent[-1][0]
     game.tick(ny(DAY, 9, 30))
-    assert "<b>NVDA</b> group ⬆️ 1" in tg.sent[-1][0]
+    assert "👥 Ben ⬆️" in tg.sent[-1][0]
     assert "picks are closed" in game.on_command("/add AAPL", 7, "Ann", ny(DAY, 9, 31))[0]
     for t in ts + ["NVDA", "TSLA", "KO"]:
         q.set(t, open_=100.0, last=100.0, when=ny(DAY, 9, 36))
@@ -1379,3 +1381,21 @@ def test_restart_gives_different_industries():
     assert len({g.ETF_GROUP[t] for t in second}) == 5
     game.on_restart("z|20261123|yes", 7, "Ann", ny(DAY, 9, 2), CHAT)        # too few left: any industries again
     assert len(set(tickers(store))) == 5
+
+
+
+def test_picks_closed_message_shows_who_and_the_ai_against_the_group():
+    game, store, tg, q, calls, clock = make(ai=True)
+    ts = full_day(game, store, tg, q, clock)
+    store.update_stock(DAY.isoformat(), ts[0], ai_call="DOWN",
+                       ai_reason="A 16% jump after a crash is a lot to hold all day. Humans love tops. Extra words.")
+    b = lean_rows(game.buttons(DAY, store.stocks(DAY.isoformat())))
+    for u, name in ((7, "Ann"), (8, "Ben")):
+        game.on_button(b[0][0][1], u, name, ny(DAY, 9))
+    for u in range(20, 28):
+        game.on_button(b[1][1][1], u, f"P{u}", ny(DAY, 9))
+    game.tick(ny(DAY, 9, 30))
+    lock = tg.sent[-1][0]
+    assert "👥 Ann ⬆️ · Ben ⬆️" in lock and "👥 ⬆️ 0 · ⬇️ 8" in lock               # names, or counts when many
+    assert "“A 16% jump after a crash is a lot to hold all day.”" in lock and "Humans love tops" not in lock
+    assert "⚔️ Ah Huat is going <b>against the group</b> on" in lock and "Results at 05:10" in lock
