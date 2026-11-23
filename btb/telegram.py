@@ -10,6 +10,14 @@ from zoneinfo import ZoneInfo
 import requests
 
 
+def redact(text: str, token: str) -> str:
+    """Error text can carry request URLs, and Bot API URLs contain the token."""
+    text = str(text)
+    if token:
+        text = text.replace(token, "<token>")
+    return re.sub(r"bot\d{5,}:[A-Za-z0-9_-]{20,}", "bot<token>", text)
+
+
 class Forbidden(Exception):
     """The bot can no longer post in a chat (removed from the group, or blocked)."""
 
@@ -62,6 +70,8 @@ class Telegram:
             params.pop("parse_mode")
             params["text"] = plain(text)
             res = self.call("sendMessage", **params)
+        if not res.get("ok"):
+            raise RuntimeError(f"Telegram refused the message: {res.get('description', 'no answer')}"[:300])
         return (res.get("result") or {}).get("message_id")
 
     def send_photo(self, png: bytes, caption: str = "", chat_id: str | None = None) -> int | None:

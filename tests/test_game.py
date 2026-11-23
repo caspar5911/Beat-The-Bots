@@ -736,3 +736,45 @@ def test_single_group_database_migrates_to_groups(tmp_path):
     new = Store(path, home_chat="-100")
     assert new.post_id("2026-11-23", -100) == 77 and new.members(-100) == {7}
     assert [c["chat_id"] for c in new.chats()] == [-100]
+
+
+def test_practice_limits():
+    game, store, tg, q, calls, clock = make(chats=tuple(range(-1, -9, -1)))
+    for t in g.POOL:
+        q.set(t, open_=100.0, last=101.0, when=ny(DAY, 16))
+    now = ny(DAY, 20)
+    game.on_command("/practice", 1, "A", now, chat_id=-1)
+    game.practice_reveal(now + dt.timedelta(minutes=3))
+    assert "Practice again in 7 min" in game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=3), chat_id=-1)[0]
+    assert "Practice round" in game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=10), chat_id=-1)[0]
+    for c in range(-2, -7, -1):                               # 6 practices with the AI within the hour...
+        game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=11), chat_id=c)
+    n = len(calls)
+    game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=12), chat_id=-7)
+    assert len(calls) == n                                    # ...then the AI sits practice out
+    p = game._practice(-7)
+    assert p and all(s["ai_call"] is None for s in p["stocks"])
+
+
+def test_redact_token():
+    from btb.telegram import redact
+    tok = "123456789:" + "A" * 35
+    msg = f"HTTPSConnectionPool: Max retries exceeded with url: /bot{tok}/getUpdates"
+    assert tok not in redact(msg, tok) and "<token>" in redact(msg, tok)
+    assert tok not in redact(msg, "")                         # pattern fallback
+
+
+def test_send_raises_with_telegram_reason():
+    from btb.telegram import Telegram
+
+    class Session:
+        def post(self, url, json=None, timeout=None):
+            class R:
+                status_code = 400
+
+                def json(self):
+                    return {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}
+            return R()
+
+    with pytest.raises(RuntimeError, match="chat not found"):
+        Telegram("t", "1", session=Session()).send("x")

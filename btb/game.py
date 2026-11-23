@@ -47,6 +47,8 @@ MOVERS = 3                        # of the day's stocks, this many are the bigge
 BANTER_MODEL_GROUPS = 5           # groups beyond this get template banter (one model call per group)
 PRACTICE_STOCKS = 3
 PRACTICE_SECONDS = 120
+PRACTICE_COOLDOWN = dt.timedelta(minutes=10)  # per group, from the start of its last practice
+PRACTICE_AI_PER_HOUR = 6                       # across groups: the model is shared with other work
 
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
 DISCLAIMER = "<i>Just a game: not investment advice, no money involved.</i>"
@@ -805,6 +807,9 @@ class Game:
         p = self._practice(chat_id)
         if p and not p.get("revealed") and now < dt.datetime.fromisoformat(p["ends"]) + dt.timedelta(minutes=5):
             return "A practice round is already running: tap the buttons above.", None
+        if p and now < dt.datetime.fromisoformat(p["ends"]) - dt.timedelta(seconds=PRACTICE_SECONDS) + PRACTICE_COOLDOWN:
+            wait = dt.datetime.fromisoformat(p["ends"]) - dt.timedelta(seconds=PRACTICE_SECONDS) + PRACTICE_COOLDOWN - now
+            return f"Practice again in {max(1, round(wait.total_seconds() / 60))} min.", None
         rng = random.Random(now.isoformat())
         tickers = rng.sample(POOL, PRACTICE_STOCKS)
         try:
@@ -823,7 +828,10 @@ class Game:
                            "day": ut.date().isoformat(), "live": live, "ai_call": None, "ai_reason": ""})
         if not stocks:
             return "No usable prices for practice right now. Try again in a bit.", None
-        if self.ai_ready():
+        recent = [t for t in json.loads(self.store.get("practice_ai", "[]"))
+                  if now - dt.datetime.fromisoformat(t) < dt.timedelta(hours=1)]
+        if len(recent) < PRACTICE_AI_PER_HOUR and self.ai_ready():
+            self.store.set("practice_ai", json.dumps(recent + [now.isoformat()]))
             for s in stocks:
                 # Same information as the players: no pre-market price (the snapshot's is from a later session).
                 got = self.call_ai(s["ticker"], s["name"], {"prev_close": (q.get(s["ticker"]) or {}).get("prev_close")}, [])

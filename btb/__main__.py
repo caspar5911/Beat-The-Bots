@@ -99,8 +99,14 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
     if not s.telegram_token or not s.glm_base_url:
         print("Set BTB_TELEGRAM_TOKEN and GLM_BASE_URL in .env first (see README).")
         return 2
+    from .telegram import redact
+
+    def log(msg) -> None:
+        print(redact(msg, s.telegram_token), flush=True)
+
     store, tg = Store(s.db_path, s.bot_name, home_chat=s.chat_id or None), Telegram(s.telegram_token, s.chat_id)
     game = make_game(s, store, tg)
+    game.log = log
     offset = int(store.get("tg_offset", "0") or 0)
     last_tick = 0.0
     print(f"{s.game_name} running in {len(store.chats())} group(s).", flush=True)
@@ -112,11 +118,11 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
                 game.tick(now)
                 refresh_count(game, tg, now)
             except Exception as e:
-                print(f"tick failed: {e!r}"[:400], flush=True)
+                log(f"tick failed: {e!r}"[:400])
         try:
             updates = tg.updates(offset)
         except Exception as e:
-            print(f"getUpdates failed: {e!r}"[:300], flush=True)
+            log(f"getUpdates failed: {e!r}"[:300])
             time.sleep(5)
             continue
         for u in updates:
@@ -125,7 +131,7 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
             try:
                 handle(game, tg, u, dt.datetime.now(dt.timezone.utc))
             except Exception as e:
-                print(f"update failed: {e!r}"[:400], flush=True)
+                log(f"update failed: {e!r}"[:400])
 
 
 class Printer:
