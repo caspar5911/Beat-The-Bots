@@ -26,21 +26,20 @@ from .config import NY, SG
 from .store import BOT_ID, CONF, VOID, Store
 from .telegram import Forbidden
 
-# Stocks grouped by industry. A day's stocks come from different industries, because stocks in the same industry
+# Well-known US brands grouped by industry. A day's stocks come from different industries, because stocks in the same industry
 # tend to move together (one piece of chip news moves every chip stock), which would make 5 picks really 1.
 SECTORS = {
-    "Chips": ["NVDA", "AMD", "AVGO", "INTC", "MU", "ARM", "SMCI"],
-    "Software & gadgets": ["AAPL", "MSFT", "ORCL", "CRM", "ADBE", "SNOW", "PLTR"],
-    "Internet & media": ["GOOGL", "META", "NFLX", "DIS"],
-    "Travel apps": ["UBER", "ABNB"],
-    "Shopping": ["AMZN", "SHOP", "COST", "WMT", "HD", "NKE"],
-    "Food & drink": ["KO", "MCD", "SBUX"],
-    "Banks & payments": ["JPM", "GS", "V", "PYPL"],
-    "Crypto & trading apps": ["COIN", "HOOD"],
-    "Cars": ["TSLA", "RIVN"],
-    "Health": ["LLY", "UNH", "JNJ", "PFE", "MRNA"],
-    "Energy": ["XOM", "CVX", "OXY"],
-    "Factories & planes": ["BA", "CAT", "GE"],
+    "Chips": ["NVDA", "AMD", "INTC"],
+    "Software & gadgets": ["AAPL", "MSFT", "ADBE", "ORCL"],
+    "Internet & media": ["GOOGL", "META", "NFLX", "DIS", "SPOT"],
+    "Travel": ["UBER", "ABNB", "BKNG"],
+    "Shopping": ["AMZN", "COST", "WMT", "NKE"],
+    "Food & drink": ["KO", "PEP", "MCD", "SBUX"],
+    "Banks & payments": ["JPM", "V", "MA", "PYPL"],
+    "Cars": ["TSLA", "F", "GM"],
+    "Health": ["JNJ", "PFE"],
+    "Energy": ["XOM", "CVX"],
+    "Planes & machines": ["BA", "GE"],
 }
 SECTOR = {t: name for name, tickers in SECTORS.items() for t in tickers}
 POOL = [t for tickers in SECTORS.values() for t in tickers]

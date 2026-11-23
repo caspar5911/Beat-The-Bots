@@ -63,7 +63,7 @@ GENERIC = {"the", "inc", "corp", "group", "holdings", "company", "and", "co"}
 # Company names whose first word is too generic to find or filter headlines with.
 KEYWORDS = {"AMD": ["Advanced Micro"], "SMCI": ["Super Micro", "Supermicro"], "KO": ["Coca-Cola"],
             "ARM": ["Arm Holdings"], "LLY": ["Eli Lilly", "Lilly"], "HD": ["Home Depot"],
-            "JNJ": ["Johnson & Johnson", "J&J"], "GE": ["GE Aerospace"]}
+            "JNJ": ["Johnson & Johnson", "J&J"], "GE": ["GE Aerospace"], "GM": ["General Motors"], "F": ["Ford"]}
 
 
 def _keyword(name: str) -> str:

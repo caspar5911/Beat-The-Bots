@@ -14,7 +14,7 @@ don't. Scores reward honest confidence, and the reports show players their own h
 
 | When | What happens |
 |---|---|
-| 07:30 | Round posted in every group: 3 of the day's biggest pre-market movers + 2 random stocks, each with its pre-market move and one headline. Buttons per stock: ⏫ very sure up · ⬆️ think so up · ⬇️ think so down · ⏬ very sure down. The AI makes its calls with an honest confidence, hidden. |
+| 07:30 | Round posted in every group: 5 well-known US brands from 5 different industries (up to 3 are the day's biggest pre-market movers), each with its pre-market move and one headline. Buttons per stock: ⏫ very sure up · ⬆️ think so up · ⬇️ think so down · ⏬ very sure down. The AI makes its calls with an honest confidence, hidden. |
 | 09:20 | Reminder tagging regular players who still have picks to make. |
 | 09:30 | Picks lock: the group's split per stock and the AI's calls, confidence and reasons are revealed. |
 | 11:00 | Halfway update (optional: `/halfway on`): live standings. |

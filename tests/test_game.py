@@ -355,6 +355,8 @@ def test_generic_company_names():
     assert news.about("Coca-Cola raises prices", "KO", "Coca-Cola")
     assert not news.about("He hurt his arm", "ARM", "Arm Holdings")
     assert news.about("Visa beats estimates", "V", "Visa")
+    assert news.about("Ford recalls trucks", "F", "Ford Motor") and not news.about("F-35 jets", "F", "Ford Motor")
+    assert news.about("General Motors cuts jobs", "GM", "General Motors") and not news.about("General election", "GM", "General Motors")
 
 
 def test_quiet_at_night():
@@ -604,9 +606,9 @@ def test_practice_when_quotes_down():
 
 def test_pick_stocks_prefers_premarket_movers():
     q = {t: {"pre_price": 101.0, "prev_close": 100.0} for t in g.POOL}
-    q["HOOD"]["pre_price"], q["KO"]["pre_price"], q["SMCI"]["pre_price"] = 92.0, 106.0, 104.0
+    q["F"]["pre_price"], q["KO"]["pre_price"], q["NVDA"]["pre_price"] = 92.0, 106.0, 104.0
     picks = g.pick_stocks(DAY, 5, q)
-    assert {"HOOD", "KO", "SMCI"} <= set(picks) and len(set(picks)) == 5
+    assert {"F", "KO", "NVDA"} <= set(picks) and len(set(picks)) == 5
     assert picks == g.pick_stocks(DAY, 5, q)                  # deterministic for the day
     assert len(g.pick_stocks(DAY, 5, {})) == 5                # no pre-market prices: random
 
@@ -615,12 +617,12 @@ def test_round_uses_movers_and_one_quote_call():
     game, store, tg, q, calls, clock = make()
     for t in g.POOL:
         q.set(t, pre=100.5)
-    q.set("HOOD", pre=93.0)
+    q.set("F", pre=93.0)
     seen = []
     real = q.__call__
     game.quotes = lambda ts: seen.append(len(ts)) or real(ts)
     game.tick(ny(DAY, 7, 30))
-    assert seen == [len(g.POOL)] and "HOOD" in tickers(store)
+    assert seen == [len(g.POOL)] and "F" in tickers(store)
 
 
 def test_whole_market_line_and_extras_are_off_by_default():
@@ -1048,11 +1050,11 @@ def test_my_picks_popup_and_toast():
 
 def test_stocks_come_from_different_industries():
     q = {t: {"pre_price": 100.5, "prev_close": 100.0} for t in g.POOL}
-    for t, p in (("AVGO", 90.0), ("MU", 91.0), ("AMD", 92.0), ("GOOGL", 103.0), ("META", 97.5)):
+    for t, p in (("NVDA", 90.0), ("INTC", 91.0), ("AMD", 92.0), ("GOOGL", 103.0), ("META", 97.5)):
         q[t]["pre_price"] = p                                   # tonight: chips and internet move most
     picks = g.pick_stocks(DAY, 5, q)
     assert len({g.SECTOR[t] for t in picks}) == 5
-    assert "AVGO" in picks and "MU" not in picks and "AMD" not in picks   # only the biggest chip mover
+    assert "NVDA" in picks and "INTC" not in picks and "AMD" not in picks   # only the biggest chip mover
     assert "GOOGL" in picks
     for d in range(60):                                        # any day, with or without prices
         day = DAY + dt.timedelta(days=d)
