@@ -27,7 +27,7 @@ class FakeTG:
         self.to.append(chat_id)
         return len(self.sent)
 
-    def send_photo(self, png, caption="", chat_id=None):
+    def send_photo(self, png, caption="", chat_id=None, html=False):
         self.photos.append((chat_id, png, caption))
         return 1
 
@@ -133,7 +133,8 @@ def test_whole_day():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
     text, buttons = tg.sent[0]
-    assert [len(r) for r in buttons] == [1, 4, 1, 4, 1, 4, 1] and buttons[-1][0][1] == "k|20261123"   # + "My picks"
+    assert [len(r) for r in buttons] == [2, 4, 2, 4, 2, 4, 1] and buttons[-1][0][1] == "k|20261123"   # + "My picks"
+    assert buttons[0][1] == ("📊 More", f"x|20261123|{ts[0]}")
     assert buttons[0][0][1] == f"i|20261123|{ts[0]}" and g.ETF_LABEL[ts[0]].split(" (")[0] in buttons[0][0][0] or ts[0] == "SMH"
     assert ts[0] in game.on_button(buttons[0][0][1], 7, "Ann", ny(DAY, 8)) and game.is_alert(buttons[0][0][1])
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
@@ -1218,3 +1219,44 @@ def test_moves_before_the_open_use_the_latest_close():
     assert market.ref_close(intraday, DAY) == 349.21                                # during a session: prev_close
     half_day = dict(friday_close, update_time=dt.datetime(2026, 11, 27, 13, 0, tzinfo=NY))
     assert market.ref_close(half_day, dt.date(2026, 11, 27)) == 342.56
+
+
+def test_more_details_in_private_chat():
+    from btb.__main__ import handle
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    t = ts[0]
+    days = [DAY - dt.timedelta(days=i) for i in range(30, 0, -1) if (DAY - dt.timedelta(days=i)).weekday() < 5]
+    hist = [{"date": d, "open": 100.0, "close": 101.0 if i % 3 else 99.0} for i, d in enumerate(days)]
+    game.history = lambda ticker: hist
+    q.set(t, last=50.0, prev_close=49.0, pre=50.5, when=ny(DAY - dt.timedelta(days=3), 16), high52=60.0, low52=40.0)
+    q.set("SPY", last=600.0, prev_close=598.0, pre=606.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    text, chart = game.details(DAY.isoformat(), t, ny(DAY, 8))
+    assert "Before the open: +1.0% (whole market +1.0%)" in text and "A normal day (open to close): about ±1.0%" in text
+    assert "Last 20 days: ended higher than it opened <b>13</b> times, lower 7 times" in text
+    assert "Last 5 days:" in text and "17% below its 1-year high" in text and chart[:4] == b"\x89PNG"
+    cq = {"id": "c", "data": f"x|20261123|{t}", "from": {"id": 7, "first_name": "Ann"},
+          "message": {"chat": {"id": CHAT, "type": "group"}}}
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 8))
+    assert tg.photos[-1][0] == 7 and "Sent to your private chat" in tg.answers[-1]
+
+    def blocked(*a, **k):
+        raise g.Forbidden("bot can't initiate conversation with a user")
+    tg.send_photo = blocked
+    game.bot_username = "HuatOrNotBot"
+    urls = []
+    tg.answer = lambda cid, text, alert=False, url=None: urls.append(url)
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 8))
+    assert urls[-1] == f"https://t.me/HuatOrNotBot?start=more_20261123_{t}"
+    tg.send_photo = lambda png, caption="", chat_id=None, html=False: tg.photos.append((chat_id, png, caption))
+    handle(game, tg, {"message": {"chat": {"id": 7, "type": "private"}, "from": {"id": 7, "first_name": "Ann"},
+                                  "text": f"/start more_20261123_{t}"}}, ny(DAY, 8))
+    assert tg.photos[-1][0] == 7 and t in tg.photos[-1][2]
+
+
+def test_more_details_without_history():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    game.history = lambda ticker: []
+    text, chart = game.details(DAY.isoformat(), ts[0], ny(DAY, 8))
+    assert chart is None and "normal day" not in text and "Just a game" in text

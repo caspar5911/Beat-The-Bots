@@ -74,9 +74,11 @@ class Telegram:
             raise RuntimeError(f"Telegram refused the message: {res.get('description', 'no answer')}"[:300])
         return (res.get("result") or {}).get("message_id")
 
-    def send_photo(self, png: bytes, caption: str = "", chat_id: str | None = None) -> int | None:
-        r = self.http.post(f"{self.api}/sendPhoto", timeout=60,
-                           data={"chat_id": chat_id or self.chat_id, "caption": caption[:1000]},
+    def send_photo(self, png: bytes, caption: str = "", chat_id: str | None = None, html: bool = False) -> int | None:
+        data = {"chat_id": chat_id or self.chat_id, "caption": caption[:1024]}
+        if html:
+            data["parse_mode"] = "HTML"
+        r = self.http.post(f"{self.api}/sendPhoto", timeout=60, data=data,
                            files={"photo": ("card.png", png, "image/png")})
         try:
             res = r.json()
@@ -104,8 +106,14 @@ class Telegram:
             params["reply_markup"] = keyboard(buttons)
         self.call("editMessageText", **params)
 
-    def answer(self, callback_id: str, text: str, alert: bool = False) -> None:
-        self.call("answerCallbackQuery", callback_query_id=callback_id, text=text[:200], show_alert=alert)
+    def answer(self, callback_id: str, text: str, alert: bool = False, url: str | None = None) -> None:
+        params = {"callback_query_id": callback_id, "text": text[:200], "show_alert": alert}
+        if url:
+            params["url"] = url
+        self.call("answerCallbackQuery", **params)
+
+    def username(self) -> str:
+        return ((self.call("getMe").get("result")) or {}).get("username", "")
 
     def send_poll(self, question: str, options: list[str], correct: int, explanation: str = "",
                   chat_id: str | None = None) -> str | None:

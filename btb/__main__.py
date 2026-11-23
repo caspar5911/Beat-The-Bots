@@ -6,10 +6,11 @@ import datetime as dt
 import sys
 import time
 
-from . import glm, market, news
+from . import glm, history, market, news
 from .config import NY, Settings
 from .game import POST_AT, Game, at
 from .store import Store
+from .telegram import Forbidden
 
 
 def display_name(user: dict) -> str:
@@ -28,7 +29,7 @@ def make_game(s: Settings, store: Store, tg, clock=None) -> Game:
                 ai_ready=lambda: glm.healthy(s), banter=lambda summary: glm.banter(s, summary),
                 call_mover=lambda stocks: glm.call_mover(s, stocks), clock=clock,
                 explain=lambda rows: glm.why(s, rows), teach=lambda summary: glm.lesson(s, summary),
-                summarize=lambda name, heads: glm.news_line(s, name, heads))
+                summarize=lambda name, heads: glm.news_line(s, name, heads), history=history.daily)
 
 
 GROUPS = ("group", "supergroup")
@@ -68,6 +69,24 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
             tg.answer(cq["id"], "This game is played in its Telegram group.")
             return
         data = cq.get("data", "")
+        if data.startswith("x|"):  # 📊 More: details in the player's private chat with the bot
+            game.store.player(int(user["id"]), display_name(user))
+            game.store.member(int(chat["id"]), int(user["id"]))
+            try:
+                _, d, ticker = data.split("|")
+                game.send_details(int(user["id"]), dt.datetime.strptime(d, "%Y%m%d").date().isoformat(), ticker)
+                tg.answer(cq["id"], "📊 Sent to your private chat with me.")
+            except Forbidden:
+                link = game.more_link(data)
+                if link:
+                    tg.answer(cq["id"], "", url=link)
+                else:
+                    tg.answer(cq["id"], "Open a private chat with me first (tap my name, then Start), then tap 📊 again.",
+                              alert=True)
+            except Exception as e:
+                game.log(f"details failed: {e!r}"[:300])
+                tg.answer(cq["id"], "Couldn't get the details right now. Try again soon.")
+            return
         tg.answer(cq["id"], game.on_button(data, int(user.get("id", -1)), display_name(user), now,
                                            chat_id=int(chat["id"])), alert=game.is_alert(data))
         return
@@ -80,6 +99,13 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
         return
     user = m.get("from") or {}
     if chat.get("type") not in GROUPS:
+        words = m["text"].split()
+        if words[0].split("@")[0].lower() == "/start" and len(words) > 1:
+            try:
+                if game.on_private_start(words[1], int(chat["id"])):
+                    return
+            except Exception as e:
+                game.log(f"details failed: {e!r}"[:300])
         if m["text"].split()[0].split("@")[0].lower() in ("/start", "/help"):
             game.send(int(chat["id"]), game.help_text() + "\n\nAdd me to a group with your friends to play.")
         return
@@ -120,6 +146,10 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
     store, tg = Store(s.db_path, s.bot_name, home_chat=s.chat_id or None), Telegram(s.telegram_token, s.chat_id)
     game = make_game(s, store, tg)
     game.log = log
+    try:
+        game.bot_username = tg.username()
+    except Exception as e:
+        log(f"getMe failed: {e!r}"[:300])
     try:
         game.refresh_open_rounds()
     except Exception as e:

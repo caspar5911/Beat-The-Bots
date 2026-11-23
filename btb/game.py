@@ -309,11 +309,12 @@ def help_text(title: str, bot: str) -> str:
 
 class Game:
     def __init__(self, settings, store: Store, tg, quotes, news, call_ai, ai_ready, banter=None, call_mover=None,
-                 cards=None, log=print, clock=None, explain=None, teach=None, summarize=None):
+                 cards=None, log=print, clock=None, explain=None, teach=None, summarize=None, history=None):
         self.s, self.store, self.tg = settings, store, tg
         self.quotes, self.news, self.call_ai, self.ai_ready = quotes, news, call_ai, ai_ready
         self.banter, self.call_mover, self.log = banter, call_mover, log
-        self.explain, self.teach, self.summarize = explain, teach, summarize
+        self.explain, self.teach, self.summarize, self.history = explain, teach, summarize, history
+        self.bot_username = ""
         self._live: dict[str, tuple[dt.datetime, dict]] = {}
         if cards is None:
             from . import cards as cards_module
@@ -416,7 +417,7 @@ class Game:
             if mid:
                 self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
         k = day.strftime("%Y%m%d")
-        row = [[(self.label(s), f"i|{k}|{ticker}")], self.choice_row(k, ticker)]
+        row = [[(self.label(s), f"i|{k}|{ticker}"), ("📊 More", f"x|{k}|{ticker}")], self.choice_row(k, ticker)]
         return (f"➕ {esc(name)} added <b>{esc(ticker)}</b> ({esc(s['name'])}) to today's game · {_move(s)}.\n"
                 f"Got an opinion? Tap below (or in the game message). Not sure? Skip it, no points lost. "
                 f"Picks close at {_sg(lock_at(day))} Singapore time."), row
@@ -444,7 +445,7 @@ class Game:
         key = day.strftime("%Y%m%d")
         rows = []
         for s in stocks:
-            rows.append([(cls.label(s), f"i|{key}|{s['ticker']}")])
+            rows.append([(cls.label(s), f"i|{key}|{s['ticker']}"), ("📊 More", f"x|{key}|{s['ticker']}")])
             rows.append(cls.choice_row(key, s["ticker"]))
         rows.append([("👀 My picks", f"k|{key}")])
         return rows
@@ -501,6 +502,89 @@ class Game:
         text = "\n".join(lines)
         room = 200 - len(text) - len("\nNews: ")
         return text + (f"\nNews: {news[:room - 1] + '…' if len(news) > room else news}" if room > 20 else "")
+
+    def details(self, key: str, ticker: str, now: dt.datetime | None = None) -> tuple[str, bytes | None] | None:
+        """The 'More' details for one line of a game: (HTML text, chart PNG or None). Sent in a private chat."""
+        s = next((s for s in self.store.stocks(key) if s["ticker"] == ticker), None)
+        if not s:
+            return None
+        now = now or dt.datetime.now(dt.timezone.utc)
+        ny = now.astimezone(NY)
+        lines = [f"📊 <b>{esc(self.label(s).rsplit(' · ', 1)[0])} · {esc(ticker)}</b>"]
+        if ticker in ETF_LABEL and " (" in ETF_LABEL[ticker]:
+            lines.append("Inside: " + esc(ETF_LABEL[ticker].split(" (", 1)[1].rstrip(")")) + " and many more")
+        q = self.live([ticker, "SPY"], now)
+        info, spy = q.get(ticker) or {}, q.get("SPY") or {}
+        m, mk = pre_move(info, ny.date()) if info else pre_move(s), pre_move(spy, ny.date())
+        if m is not None:
+            lines.append(f"Before the open: {m:+.1%}" + (f" (whole market {mk:+.1%})" if mk is not None else ""))
+        rows = []
+        if self.history:
+            try:
+                rows = [r for r in self.history(ticker) if r["date"] < ny.date()]
+            except Exception as e:
+                self.log(f"history failed: {e!r}"[:300])
+        last20 = rows[-20:]
+        if len(last20) >= 10:
+            day_moves = [r["close"] / r["open"] - 1 for r in last20]
+            usual = sum(abs(x) for x in day_moves) / len(day_moves)
+            ups = sum(x > 0 for x in day_moves)
+            lines.append(f"A normal day (open to close): about ±{usual:.1%}")
+            lines.append(f"Last {len(last20)} days: ended higher than it opened <b>{ups}</b> times, lower "
+                         f"{len(last20) - ups} times")
+            lines.append("Last 5 days: " + ", ".join(f"{x:+.1%}" for x in day_moves[-5:]))
+            month = rows[-22:]
+            lines.append(f"Past month: {month[-1]['close'] / month[0]['close'] - 1:+.1%}" + self.year_position(info))
+        news = s.get("news_line") or ""
+        if news:
+            lines.append(f"\nNews: {esc(news)}")
+        heads = [clean_headline(h["title"]) for h in s["headlines"][:3]]
+        heads = [h for h in heads if h != "No big news today."]
+        lines += [f"• {esc(h[:110])}" for h in heads[:2]]
+        lines.append("\n<i>Tip: start from how often it usually ends higher, then ask if today's news really "
+                     "changes that. Just a game, not advice.</i>")
+        chart = None
+        if len(rows) >= 5:
+            try:
+                chart = self.cards.price_chart(f"{ticker} · past month", rows[-22:])
+            except Exception as e:
+                self.log(f"chart failed: {e!r}"[:300])
+        return "\n".join(lines), chart
+
+    def send_details(self, chat_id: int, key: str, ticker: str) -> bool:
+        """Raises Forbidden when the player has never opened a private chat with the bot."""
+        got = self.details(key, ticker)
+        if not got:
+            self.tg.send("That game is over.", None, chat_id=chat_id)
+            return True
+        text, chart = got
+        if chart and len(text) <= 1024:
+            self.tg.send_photo(chart, text, chat_id=chat_id, html=True)
+        else:
+            if chart:
+                self.tg.send_photo(chart, "", chat_id=chat_id)
+            self.tg.send(text, None, chat_id=chat_id)
+        return True
+
+    def more_link(self, data: str) -> str | None:
+        """A t.me link that opens a private chat with the bot and asks for these details on Start."""
+        try:
+            _, d, ticker = data.split("|")
+        except ValueError:
+            return None
+        return f"https://t.me/{self.bot_username}?start=more_{d}_{ticker}" if self.bot_username else None
+
+    def on_private_start(self, payload: str, chat_id: int) -> bool:
+        """/start more_YYYYMMDD_TICKER in a private chat (from the More button's link)."""
+        if not payload.startswith("more_"):
+            return False
+        try:
+            _, d, ticker = payload.split("_", 2)
+            key = dt.datetime.strptime(d, "%Y%m%d").date().isoformat()
+        except ValueError:
+            return False
+        self.send_details(chat_id, key, ticker.upper())
+        return True
 
     @staticmethod
     def year_position(info: dict) -> str:

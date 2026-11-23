@@ -104,3 +104,27 @@ def group_card(title: str, bot: str, since: str, until: str, rows: list[dict], l
         y += 110
     _center(d, H - 70, "A daily stock game against an AI, on Telegram", _font(28), MUTED, W)
     return _png(img)
+
+
+def price_chart(title: str, rows: list[dict]) -> bytes:
+    """A small one-month line chart of daily closes."""
+    W, H, pad = 900, 420, 60
+    img = Image.new("RGB", (W, H), BG)
+    d = ImageDraw.Draw(img)
+    d.text((pad, 20), clean(title), font=_font(30, True), fill=INK)
+    closes = [r["close"] for r in rows]
+    if len(closes) < 2:
+        return _png(img)
+    lo, hi = min(closes), max(closes)
+    span = (hi - lo) or 1
+    pts = [(pad + i * (W - 2 * pad) / (len(closes) - 1), H - pad - (c - lo) / span * (H - 2 * pad - 40))
+           for i, c in enumerate(closes)]
+    up = closes[-1] >= closes[0]
+    colour = GREEN if up else RED
+    d.polygon(pts + [(pts[-1][0], H - pad), (pts[0][0], H - pad)], fill=(colour[0] // 5, colour[1] // 5, colour[2] // 5))
+    d.line(pts, fill=colour, width=4)
+    f = _font(22)
+    d.text((pad, H - pad + 12), f"{rows[0]['date']:%d %b}", font=f, fill=MUTED)
+    end = f"{rows[-1]['date']:%d %b}  {closes[-1] / closes[0] - 1:+.1%}"
+    d.text((W - pad - d.textlength(end, font=f), H - pad + 12), end, font=f, fill=colour)
+    return _png(img)
