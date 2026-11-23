@@ -1260,3 +1260,41 @@ def test_more_details_without_history():
     game.history = lambda ticker: []
     text, chart = game.details(DAY.isoformat(), ts[0], ny(DAY, 8))
     assert chart is None and "normal day" not in text and "Just a game" in text
+
+
+
+def test_set_todays_lines():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    for t in ("SMH", "NVDA", "XLF"):
+        q.set(t, last=100.0, prev_close=99.0, pre=101.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    assert game.resolve(["chips"]) == (["SMH"], [])
+    assert game.resolve(["NVDA", "industry"]) == (["SMH"], [])
+    assert game.resolve(["chips", "banks", "NVDA"]) == (["SMH", "XLF", "NVDA"], [])
+    assert game.resolve(["chips", "blah!"])[1] == ["blah!"]
+    b = choices(game.buttons(DAY, store.stocks(DAY.isoformat())))
+    game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 8))                     # a pick on a line that will go
+    keep = "SMH" if "SMH" in ts else None
+    reply = game.on_command("/set NVDA industry", 7, "Ann", ny(DAY, 8, 10))[0]
+    assert "changed today's game to: 🔌 Chip makers" in reply
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["SMH"]
+    assert ("1 pick was dropped from removed lines" in reply) == (ts[0] != "SMH")
+    assert "Chip makers" in tg.edits[-1][1] or "SMH" in str(tg.edits[-1])
+    reply = game.on_command("/set chips NVDA", 7, "Ann", ny(DAY, 8, 11))[0]
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["SMH", "NVDA"]
+    assert "can't change" in game.on_command("/set XLF", 7, "Ann", ny(DAY, 9, 31))[0]
+    assert "set the game for Tue 24 Nov" in game.on_command("/set XLF", 7, "Ann", ny(DAY, 17))[0]   # after the close
+    assert "don't know" in game.on_command("/set chips blah!", 7, "Ann", ny(DAY, 8))[0]
+
+
+def test_set_before_the_game_is_posted_and_only_in_the_main_group():
+    store, tg, q = Store(":memory:"), FakeTG(), FakeQuotes()
+    store.add_chat(CHAT, "main", ""); store.add_chat(-200, "other", "")
+    game = g.Game(Settings(stocks_per_day=3, chat_id=str(CHAT)), store, tg, quotes=q, news=lambda t, n: [],
+                  call_ai=lambda *a: ("UP", "x", 0.5), ai_ready=lambda: True, log=lambda *_: None,
+                  clock=lambda: ny(DAY, 7, 30))
+    q.set("XLE", last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    assert "Only the main group" in game.on_command("/set oil", 7, "Ann", ny(DAY, 6), chat_id=-200)[0]
+    assert "posted at 20:30" in game.on_command("/set oil", 7, "Ann", ny(DAY, 6), chat_id=CHAT)[0]
+    game.tick(ny(DAY, 7, 30))
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["XLE"]

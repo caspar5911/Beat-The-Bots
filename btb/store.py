@@ -177,6 +177,11 @@ class Store:
              s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf"), s.get("note", "")))
         self.db.commit()
 
+    def remove_stock(self, day: str, ticker: str) -> None:
+        with self.db:
+            for t in ("stocks", "votes"):
+                self.db.execute(f"DELETE FROM {t} WHERE day=? AND ticker=?", (day, ticker))
+
     def set_status(self, day: str, status: str) -> None:
         self.db.execute("UPDATE rounds SET status=? WHERE day=?", (status, day))
         self.db.commit()

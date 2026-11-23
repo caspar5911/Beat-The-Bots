@@ -80,6 +80,18 @@ ETF_ICON = {"Tech": "💻", "Internet & media": "📺", "Shopping & cars": "🛒
             "Materials": "⛏️"}
 SUGGESTED_MAX = 2                 # most-suggested stocks that join a game
 ADDED_MAX = 3                     # stocks players may add to today's game before picks close
+SET_MAX = 8                       # lines /set may choose
+INDUSTRY_WORDS = {                # words people type for an industry -> its fund
+    "chips": "SMH", "chip": "SMH", "semiconductors": "SMH", "tech": "XLK", "technology": "XLK",
+    "internet": "XLC", "media": "XLC", "shopping": "XLY", "consumer": "XLY", "cars": "XLY", "everyday": "XLP",
+    "staples": "XLP", "food": "XLP", "banks": "XLF", "bank": "XLF", "finance": "XLF", "payments": "XLF",
+    "health": "XLV", "healthcare": "XLV", "pharma": "XLV", "oil": "XLE", "energy": "XLE", "gas": "XLE",
+    "factories": "XLI", "industrial": "XLI", "planes": "XLI", "property": "XLRE", "realestate": "XLRE",
+    "reits": "XLRE", "power": "XLU", "utilities": "XLU", "water": "XLU", "materials": "XLB", "mining": "XLB",
+}
+STOCK_FUND = {"Chips": "SMH", "Software & gadgets": "XLK", "Internet & media": "XLC", "Travel": "XLY",
+              "Shopping": "XLY", "Food & drink": "XLP", "Banks & payments": "XLF", "Cars": "XLY", "Health": "XLV",
+              "Energy": "XLE", "Planes & machines": "XLI"}
 ADDED = "➕ added by "
 
 POST_AT = dt.time(7, 30)         # 20:30 Singapore in winter: two hours to play
@@ -113,7 +125,8 @@ TICKER = re.compile(r"^[A-Z][A-Z.]{0,5}$")
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
-COMMANDS = [("today", "Today's game"), ("add", "Add a stock to today's game"),
+COMMANDS = [("today", "Today's game"), ("set", "Choose today's lines, e.g. /set chips"),
+            ("add", "Add a stock to today's game"),
             ("suggest", "Suggest a stock for the next game"),
             ("pick", "Pick any stock yourself, e.g. /pick NVDA"),
             ("board", "Scores"), ("me", "My score"), ("report", "How good are my choices?"),
@@ -299,6 +312,7 @@ def help_text(title: str, bot: str) -> str:
             "⬆️ / ⬇️ <b>think so</b>: +3 if right, −4 if wrong\n"
             "Not sure? Don't tap (0 points).\n"
             f"{esc(bot)} (our AI) plays too. Results come the next morning.\n\n"
+            "🎛 /set chips banks NVDA: choose exactly what's in today's game (main group only)\n"
             "➕ /add NVDA: add a stock to today's game (anyone can pick it, or skip it)\n"
             "💡 /suggest NVDA: suggest a stock for the next game (the 2 most-suggested join it)\n"
             "📌 /pick NVDA: pick any US stock yourself (3 a day, own score)\n"
@@ -366,6 +380,90 @@ class Game:
         if funds:
             return "Lines are whole industries, except the stocks players added."
         return ""
+
+    def resolve(self, words: list[str]) -> tuple[list[str], list[str]]:
+        """Words people type -> tickers: industry words ('chips'), 'NVDA industry', or tickers. (tickers, unknown)."""
+        out, bad, i = [], [], 0
+        while i < len(words):
+            w = words[i].strip(",").lstrip("$")
+            nxt = words[i + 1].lower() if i + 1 < len(words) else ""
+            if w.lower() in INDUSTRY_WORDS:
+                out.append(INDUSTRY_WORDS[w.lower()])
+            elif nxt in ("industry", "sector") and w.upper() in SECTOR:
+                out.append(STOCK_FUND[SECTOR[w.upper()]])
+                i += 1
+            elif TICKER.match(w.upper()):
+                out.append(w.upper())
+            elif w:
+                bad.append(w)
+            i += 1
+        return list(dict.fromkeys(out)), bad
+
+    def set_command(self, words: list[str], user_id: int, name: str, now: dt.datetime, chat_id: int | None) -> str:
+        """Choose exactly which lines are in today's game (main group only: every group shares the game)."""
+        if self.s.chat_id and str(chat_id) != str(self.s.chat_id):
+            return "Only the main group can change today's game."
+        ny = now.astimezone(NY)
+        today = ny.date()
+        day = today if market.is_trading_day(today) and ny < close_at(today) else market.next_trading_day(today)
+        key = day.isoformat()
+        if not words:
+            return ("🎛 Choose what's in today's game: /set and up to 8 industries or stocks, e.g. /set chips, "
+                    "/set NVDA, /set NVDA industry or /set chips banks TSLA. Industries: chips, tech, internet, "
+                    "shopping, everyday, banks, health, oil, factories, property, power, materials.")
+        tickers, bad = self.resolve(words)
+        if bad:
+            return f"I don't know {esc(', '.join(bad))}. Use industry words like chips or banks, or tickers like NVDA."
+        if not tickers or len(tickers) > SET_MAX:
+            return f"Choose between 1 and {SET_MAX} industries or stocks."
+        try:
+            q = self.quotes(tickers)
+        except Exception:
+            q = {}
+        missing = [t for t in tickers if not (q.get(t) or {}).get("last")]
+        if missing:
+            return f"I can't find {esc(', '.join(missing))}. Check the tickers and try again."
+        r = self.store.round(key)
+        names = ", ".join(self.label({"ticker": t, "name": (q[t].get("name") or t)}).split(" · ")[0] for t in tickers)
+        if r is None:
+            self.store.set(f"preset:{key}", json.dumps(tickers))
+            return f"🎛 {esc(name)} set the game for {day:%a %d %b}: {esc(names)}. It's posted at {_sg(at(day, POST_AT))}."
+        if r["status"] != "open" or now >= lock_at(day):
+            return "Today's picks are closed, so today's game can't change any more."
+        current = [s["ticker"] for s in self.store.stocks(key)]
+        dropped = [t for t in current if t not in tickers]
+        lost = sum(1 for v in self.store.votes(key) if v["ticker"] in dropped and v["user_id"] != BOT_ID)
+        for t in dropped:
+            self.store.remove_stock(key, t)
+        for t in tickers:
+            if t not in current:
+                self.store.add_stock(key, self.make_line(t, q[t], f"🎛 chosen by {name}"))
+        if self.ai_ready():
+            self.fill_news_lines(key)
+        stocks = self.store.stocks(key)
+        for chat in self.chat_ids():
+            mid = self.store.post_id(key, chat)
+            if mid:
+                self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
+        return (f"🎛 {esc(name)} changed today's game to: {esc(names)}. Pick on the game message above."
+                + (f" ({lost} pick{'s were' if lost != 1 else ' was'} dropped from removed lines.)" if lost else ""))
+
+    def make_line(self, ticker: str, info: dict, note: str = "") -> dict:
+        """A game line for a ticker: name, latest close, early price, headlines and the AI's hidden pick."""
+        s = {"ticker": ticker, "name": ETF_LABEL.get(ticker) or info.get("name") or ticker,
+             "prev_close": market.ref_close(info), "pre_price": info.get("pre_price"), "ai_call": None,
+             "ai_reason": "", "ai_conf": None, "note": note}
+        try:
+            heads = self.news(ticker, s["name"])
+        except Exception:
+            heads = []
+        if self.ai_ready():
+            got = self.call_ai(ticker, s["name"], info, heads)
+            if got:
+                s["ai_call"], s["ai_reason"], s["ai_conf"] = got
+        s["headlines"] = [{"title": h["title"], "published": h["published"].isoformat() if h.get("published") else None}
+                          for h in heads]
+        return s
 
     def add_command(self, arg: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None):
         """Add a stock to today's open game: it joins the game message; picking it is optional."""
@@ -803,7 +901,8 @@ class Game:
         return True
 
     def create(self, day: dt.date, now: dt.datetime) -> None:
-        ideas = self.store.suggested(day.isoformat())
+        preset = json.loads(self.store.get(f"preset:{day.isoformat()}", "[]"))
+        ideas = [] if preset else self.store.suggested(day.isoformat())
         try:
             q = self.quotes(list(dict.fromkeys(ETF_POOL + [i["ticker"] for i in ideas])))
         except Exception as e:  # quotes are context only at this stage
@@ -815,6 +914,13 @@ class Game:
         funds = [t for t in (pick_stocks(day, n + len(chosen), q) if q else pick_tickers(day, n + len(chosen)))
                  if t not in notes][:n]
         tickers = [i["ticker"] for i in chosen] + funds
+        if preset:
+            try:
+                pq = self.quotes(preset)
+            except Exception:
+                pq = {}
+            q.update(pq)
+            tickers = [t for t in preset if (pq.get(t) or {}).get("last")] or tickers
         ready = self.ai_ready()
         if not ready:
             self.log("model unavailable: the AI sits today out")
@@ -1260,6 +1366,8 @@ class Game:
             return self.extra_command(cmd[1:], arg, chat_id), None
         if cmd == "/pick":
             return self.own_command(parts[1] if len(parts) > 1 else "", now)
+        if cmd == "/set":
+            return self.set_command(parts[1:], user_id, name, now, chat_id), None
         if cmd == "/add":
             return self.add_command(parts[1] if len(parts) > 1 else "", user_id, name, now, chat_id)
         if cmd == "/suggest":
@@ -1809,7 +1917,8 @@ class Game:
 
     def suggest_command(self, arg: str, user_id: int, name: str, now: dt.datetime) -> str:
         day = self.next_game_day(now.astimezone(NY))
-        ideas = self.store.suggested(day.isoformat())
+        preset = json.loads(self.store.get(f"preset:{day.isoformat()}", "[]"))
+        ideas = [] if preset else self.store.suggested(day.isoformat())
         board = " · ".join(f"{i['ticker']} ({i['votes']})" for i in ideas[:5])
         ticker = arg.upper().lstrip("$")
         if not ticker:
