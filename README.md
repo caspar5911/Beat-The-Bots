@@ -14,12 +14,12 @@ don't. Scores reward honest confidence, and the reports show players their own h
 
 | When | What happens |
 |---|---|
-| 07:30 | Round posted in every group: 3 of the day's biggest pre-market movers + 2 random stocks, pre-market move, two headlines each. Buttons per stock: ⏫ Sure up · ⬆️ Lean up · ⬇️ Lean down · ⏬ Sure down; a 🚀 biggest-mover row; a reason row (📰 News · 📈 Trend · 👥 Friends · 🎲 Gut). The AI makes its calls with an honest confidence, hidden. |
+| 07:30 | Round posted in every group: 3 of the day's biggest pre-market movers + 2 random stocks, each with its pre-market move and one headline. Buttons per stock: ⏫ very sure up · ⬆️ think so up · ⬇️ think so down · ⏬ very sure down. The AI makes its calls with an honest confidence, hidden. |
 | 09:20 | Reminder tagging regular players who still have picks to make. |
 | 09:30 | Picks lock: the group's split per stock and the AI's calls, confidence and reasons are revealed. |
-| 11:00 | Halftime: live standings, group brain vs the AI. |
+| 11:00 | Halfway update (optional: `/halfway on`): live standings. |
 | close + 10 min | Results: the split, who was right against the crowd (🦅), group brain vs the AI, a daily 📚 lesson, ❓ "why did it move" buttons, the AI's banter. On the week's last trading day: titles, league, leaderboard image and a 📊 decision report per player. |
-| Sat 10:00 SGT | Weekend quiz: 5 Telegram quiz questions on money basics and decision habits (instant explanations). Scores Sunday 20:00 SGT. |
+| Sat 10:00 SGT | Weekend quiz (optional: `/quiz on`): 5 Telegram quiz questions on money basics and decision habits (instant explanations). Scores Sunday 20:00 SGT. |
 
 ## Scoring
 

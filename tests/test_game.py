@@ -82,8 +82,8 @@ def make(ai=True, ai_ready=True, clock_at=None, conf=None, banter=None, mover=No
 
 
 def lean_rows(b):
-    """Stock rows reordered as [lean up, lean down, sure up, sure down] (the keyboard is ⏫ ⬆️ ⬇️ ⏬ + 2 rows)."""
-    return [[r[1], r[2], r[0], r[3]] for r in b[:-2]]
+    """Stock rows reordered as [lean up, lean down, sure up, sure down] (the keyboard is ⏫ ⬆️ ⬇️ ⏬ per stock)."""
+    return [[r[1], r[2], r[0], r[3]] for r in b]
 
 
 def tickers(store, day=DAY):
@@ -127,11 +127,10 @@ def test_whole_day():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
     text, buttons = tg.sent[0]
-    assert buttons[-2][0][1].startswith("m|") and buttons[-1][0][1].startswith("r|")   # mover and reason rows
-    assert [len(r) for r in buttons[:-2]] == [4, 4, 4]
+    assert [len(r) for r in buttons] == [4, 4, 4]                      # just the stocks: no extra rows
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
-    assert "Huat or Not?" in text and "Not money advice" in text and "Very sure" in text and "Don't tap" in text
+    assert "Huat or Not?" in text and "Not money advice" in text and "very sure" in text and "don't tap" in text
     assert "goes up" not in text                     # the AI's calls stay hidden until the lock
     assert calls == ts
     up, down = buttons[0][0][1], buttons[0][1][1]
@@ -405,9 +404,6 @@ def test_confidence_rules_and_scoring():
     game.on_button(b[1][3][1], 7, "Ann", ny(DAY, 9, 2))                     # #2 sure down
     game.on_button(b[2][2][1], 7, "Ann", ny(DAY, 9, 2))                     # #3 lean down
     assert "Unknown" in game.on_button(f"v|20261123|{ts[0]}|U|x", 7, "Ann", ny(DAY, 9))
-    reason = b[-1][0][1]
-    assert "📰 News" in game.on_button(reason, 7, "Ann", ny(DAY, 9, 3)) and store.reason(DAY.isoformat(), 7) == "news"
-    assert "closed" in game.on_button(reason, 7, "Ann", ny(DAY, 9, 30))
     settle_day(game, q, ts, DAY, [101.0, 101.0, 99.0])     # #1 up (sure right), #2 up (sure wrong), #3 down (lean right)
     ann = next(r for r in store.scores() if r["user_id"] == 7)
     assert (ann["points"], ann["correct"], ann["played"]) == (5 - 11 + 3, 2, 3)
@@ -457,6 +453,7 @@ def test_reminder_without_regulars():
 
 def test_halftime_live_standings():
     game, store, tg, q, calls, clock = make()
+    assert "✅ On" in game.on_command("/halfway on", 1, "A", ny(DAY, 7))[0]
     ts = full_day(game, store, tg, q, clock)
     b = lean_rows(game.buttons(DAY, store.stocks(DAY.isoformat())))
     for row in b:
@@ -626,23 +623,23 @@ def test_round_uses_movers_and_one_quote_call():
     assert seen == [len(g.POOL)] and "HOOD" in tickers(store)
 
 
-def test_biggest_mover_bonus():
-    ts = g.pick_tickers(DAY, 3)
-    game, store, tg, q, calls, clock = make(mover=lambda stocks: (ts[2], "volatile, humans"))
-    full_day(game, store, tg, q, clock)
-    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
-    mover_row = b[-2]
-    assert "moves the most" in game.on_button(mover_row[1][1], 7, "Ann", ny(DAY, 9))      # Ann: ts[1]
-    assert "moves the most" in game.on_button(mover_row[0][1], 8, "Ben", ny(DAY, 9))      # Ben: ts[0]
+def test_whole_market_line_and_extras_are_off_by_default():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    assert "is off for this group" in game.on_command("/halfway", 1, "A", ny(DAY, 8))[0]
     game.tick(ny(DAY, 9, 30))
-    assert f"Ah Huat thinks <b>{ts[2]}</b> will move the most: volatile, humans" in tg.sent[-1][0]
-    settle_day(game, q, ts, DAY, [100.5, 95.0, 102.0])        # ts[1] moved most (-5%)
-    assert store.round(DAY.isoformat())["mover"] == ts[1]
-    res = tg.sent[-1][0]
-    assert f"Moved the most: <b>{ts[1]}</b> (-5.0%) · +2 for Ann · Ah Huat ❌" in res
-    scores = {r["name"]: (r["points"], r["correct"], r["played"]) for r in store.scores()}
-    assert scores["Ann"] == (2, 0, 0) and scores["Ben"] == (0, 0, 0)    # bonus points, not calls
-    assert store.mover_record(7) == (1, 1)
+    assert "Halfway update" not in tg.sent[-1][0]
+    for t in ts:
+        q.set(t, open_=100.0, last=99.0, when=ny(DAY, 11))
+    game.tick(ny(DAY, 11, 0))
+    assert not any(t.startswith("⏱") for t, _ in tg.sent)                  # halfway update is off
+    q.set("SPY", open_=500.0, last=495.0, prev_close=502.0, when=ny(DAY, 16))
+    settle_day(game, q, ts, DAY, [99.0, 98.0, 101.0])
+    res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
+    assert "🌍 The whole US market (SPY) went -1.0% today. Most of today's stocks went the same way." in res
+    assert "Moved the most" not in res
+    game.tick(dt.datetime(2026, 11, 28, 10, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))))
+    assert not getattr(tg, "polls", [])                                     # quiz is off
 
 
 def test_biggest_mover_void_when_a_price_is_missing():
@@ -820,24 +817,26 @@ def test_command_menu():
 
 # ---------------------------------------------------------------- round 4: decision skills
 
-def test_reasons_and_decision_reports():
+def test_decision_reports():
     fri = dt.date(2026, 11, 20)
     game, store, tg, q, calls, clock = make(clock_at=ny(fri, 7, 30))
     game.tick(ny(fri, 7, 30))
     ts = tickers(store, fri)
     b = game.buttons(fri, store.stocks(fri.isoformat()))
-    game.on_button(b[-1][0][1], 7, "Ann", ny(fri, 9))                        # 📰 news
     game.on_button(b[0][0][1], 7, "Ann", ny(fri, 9))                         # #1 sure up
     game.on_button(b[1][0][1], 7, "Ann", ny(fri, 9))                         # #2 sure up
-    game.on_button(b[2][1][1], 7, "Ann", ny(fri, 9))                         # #3 lean up
+    game.on_button(b[2][1][1], 7, "Ann", ny(fri, 9))                         # #3 think so up
     game.on_button(b[0][2][1], 8, "Ben", ny(fri, 9))                         # Ben plays 1 stock: skips 2
-    settle_day(game, q, ts, fri, [101.0, 99.0, 101.0])                       # sure 1/2, lean 1/1
+    q.set("SPY", open_=500.0, last=505.0, prev_close=490.0, when=ny(fri, 16))
+    settle_day(game, q, ts, fri, [101.0, 99.0, 101.0])                       # sure 1/2, think so 1/1
     report = next(t for t, _ in tg.sent if t.startswith("📊"))
+    assert "Just holding the whole US market (SPY) this week: +3.1%" in report
     assert "<b>Ann</b>" in report and "When very sure: right 1/2 (50%) · ⚠️ too confident" in report
-    assert "When 'think so': right 1/1 (100%) · ✅" in report and "Right, by reason: 📰 2/3 (67%)" in report
+    assert "When 'think so': right 1/1 (100%) · ✅" in report
+    assert "Points per pick: -1.0. Random guessing with the same buttons would average -2.2: better than guessing" in report
     assert "<b>Ben</b>" not in report                                         # under 3 picks: not reported
     mine = game.on_command("/report", 8, "Ben", ny(fri, 17))[0]
-    assert "When 'think so': right 0/1" in mine and "Skipped 2 stocks" in mine
+    assert "When 'think so': right 0/1" in mine and "Skipped 2 stocks" in mine and "no better than guessing" in mine
     assert "no results yet" in game.on_command("/report", 9, "Zed", ny(fri, 17))[0]
     bot = game.on_command("/bot", 7, "Ann", ny(fri, 17))[0]
     assert "When it said <b>think so</b>: right 2/3 (67%)" in bot and "sounding sure doesn't make someone right" in bot
@@ -906,6 +905,7 @@ def test_quiz_game_question():
 def test_weekend_quiz_flow():
     sg = dt.timezone(dt.timedelta(hours=8))
     game, store, tg, q, calls, clock = make()
+    game.on_command("/quiz on", 1, "A", ny(DAY, 7))
     ts = full_day(game, store, tg, q, clock)                                  # a settled round this week
     settle_day(game, q, ts, DAY, [101.0, 99.0, 102.0])
     game.tick(dt.datetime(2026, 11, 28, 9, 59, tzinfo=sg))
@@ -950,7 +950,7 @@ def test_open_round_switches_to_new_rules_on_start():
     game.refresh_open_rounds()
     v = store.votes(key)[0]
     assert (v["conf"], v["double"]) == ("lean", 0)
-    assert tg.edits and "Very sure" in tg.edits[-1][1]
+    assert tg.edits and "very sure" in tg.edits[-1][1]
     assert "Unknown" in game.on_button(f"d|20261123|{t}", 7, "Ann", ny(DAY, 9))   # double down is gone
 
 
