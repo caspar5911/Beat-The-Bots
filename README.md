@@ -32,7 +32,7 @@ cp .env.example .env   # then edit it
 
 1. In Telegram, create a **new** bot with @BotFather (never reuse another bot's token: two programs polling one
    token steal each other's messages). Put the token in `.env` as `BTB_TELEGRAM_TOKEN`.
-2. Create a group, add the bot, send `/help` in the group, then run `.venv/bin/python -m btb whereami` and put the
+2. Create a group, add the bot, send `/help@YourBotName` in the group (the `@` part makes sure the bot sees it), then run `.venv/bin/python -m btb whereami` and put the
    group's id (a negative number) in `.env` as `BTB_CHAT_ID`.
 3. Try a real round without sending anything: `.venv/bin/python -m btb demo`.
 4. Run it as a service:

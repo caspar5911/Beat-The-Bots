@@ -280,3 +280,51 @@ def test_telegram_falls_back_to_plain_text():
     sess = Session()
     assert Telegram("t", "1", session=sess).send("<b>hi</b> &amp; bye") == 9
     assert sess.bodies[1]["text"] == "hi & bye" and "parse_mode" not in sess.bodies[1]
+
+
+def test_failed_post_is_retried_until_lock():
+    game, store, tg, q, calls, clock = make()
+    real = tg.send
+    tg.send = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Telegram 502"))
+    with pytest.raises(RuntimeError):
+        game.tick(ny(DAY, 8, 45))
+    assert store.round(DAY.isoformat())["message_id"] is None
+    tg.send = real
+    game.tick(ny(DAY, 8, 46))
+    assert store.round(DAY.isoformat())["message_id"] == 1 and "Beat the Bot" in tg.sent[0][0]
+    assert len(calls) == 3                     # the model was not asked again
+
+
+def test_settle_retries_are_spaced():
+    game, store, tg, q, calls, clock = make()
+    full_day(game, store, tg, q, clock)
+    game.tick(ny(DAY, 9, 30))
+    q.fail = True
+    for m in (10, 11, 15, 21):
+        game.tick(ny(DAY, 16, m))
+    assert store.round(DAY.isoformat())["status"] == "locked"
+    q.fail = False
+    for t in tickers(store):
+        q.set(t, open_=100.0, last=101.0, when=ny(DAY, 16))
+    game.tick(ny(DAY, 16, 25))                 # within 10 minutes of the 16:21 try
+    assert store.round(DAY.isoformat())["status"] == "locked"
+    game.tick(ny(DAY, 16, 31))
+    assert store.round(DAY.isoformat())["status"] == "settled"
+
+
+def test_generic_company_names():
+    assert news.about("Advanced Micro Devices unveils chip", "AMD", "Advanced Micro Devices")
+    assert not news.about("Advanced packaging demand soars", "AMD", "Advanced Micro Devices")
+    assert news.about("Supermicro shares jump", "SMCI", "Super Micro Computer")
+    assert not news.about("Super Bowl ads", "SMCI", "Super Micro Computer")
+    assert news.about("Coca-Cola raises prices", "KO", "Coca-Cola")
+    assert not news.about("He hurt his arm", "ARM", "Arm Holdings")
+    assert news.about("Visa beats estimates", "V", "Visa")
+
+
+def test_quiet_at_night():
+    from btb.telegram import night
+    sg = dt.timezone(dt.timedelta(hours=8))
+    assert night(dt.datetime(2026, 11, 24, 5, 10, tzinfo=sg))
+    assert night(dt.datetime(2026, 11, 23, 23, 0, tzinfo=sg))
+    assert not night(dt.datetime(2026, 11, 23, 22, 30, tzinfo=sg))

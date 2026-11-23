@@ -1,9 +1,11 @@
 """Minimal Telegram Bot API client (HTML messages, inline buttons)."""
 from __future__ import annotations
 
+import datetime as dt
 import html
 import re
 import time
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -12,6 +14,12 @@ def keyboard(rows) -> dict | None:
     if not rows:
         return None
     return {"inline_keyboard": [[{"text": a, "callback_data": b[:64]} for a, b in row] for row in rows]}
+
+
+def night(now: dt.datetime | None = None) -> bool:
+    """Singapore night (23:00-08:00): messages arrive silently."""
+    h = (now or dt.datetime.now(dt.timezone.utc)).astimezone(ZoneInfo("Asia/Singapore")).hour
+    return h >= 23 or h < 8
 
 
 def plain(t: str) -> str:
@@ -27,15 +35,19 @@ class Telegram:
     def call(self, method: str, timeout: float = 30, **params) -> dict:
         for attempt in range(2):
             r = self.http.post(f"{self.api}/{method}", json=params, timeout=timeout)
+            try:
+                data = r.json()
+            except ValueError:  # e.g. an HTML 502 page
+                data = {}
             if r.status_code == 429 and attempt == 0:
-                time.sleep(min(int(r.json().get("parameters", {}).get("retry_after", 5)), 30))
+                time.sleep(min(int(data.get("parameters", {}).get("retry_after", 5)), 30))
                 continue
-            return r.json()
+            return data
         return {}
 
     def send(self, text: str, buttons=None, chat_id: str | None = None) -> int | None:
         params = {"chat_id": chat_id or self.chat_id, "text": text, "parse_mode": "HTML",
-                  "disable_web_page_preview": True}
+                  "disable_web_page_preview": True, "disable_notification": night()}
         if buttons:
             params["reply_markup"] = keyboard(buttons)
         res = self.call("sendMessage", **params)

@@ -25,6 +25,7 @@ LAST_POST = dt.time(9, 20)       # too late to give people time to play: skip th
 AI_DEADLINE = dt.time(9, 15)     # stop asking the model; later stocks are played without the Bot
 OPEN_CAPTURE = dt.time(9, 35)
 SETTLE_DELAY = dt.timedelta(minutes=10)
+SETTLE_RETRY = dt.timedelta(minutes=10)
 GIVE_UP = dt.timedelta(days=4)   # unresolved stocks are voided after this
 
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
@@ -140,14 +141,19 @@ class Game:
     def __init__(self, settings, store: Store, tg, quotes, news, call_ai, ai_ready, log=print, clock=None):
         self.s, self.store, self.tg = settings, store, tg
         self.clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
+        self._settle_tried: dict[str, dt.datetime] = {}
         self.quotes, self.news, self.call_ai, self.ai_ready, self.log = quotes, news, call_ai, ai_ready, log
 
     # ---------------------------------------------------------------- stages
     def tick(self, now: dt.datetime) -> None:
         ny = now.astimezone(NY)
         day = ny.date()
-        for r in self.store.db.execute("SELECT day, status FROM rounds WHERE status IN ('open','locked') ORDER BY day"):
+        rows = self.store.db.execute(
+            "SELECT day, status, message_id FROM rounds WHERE status IN ('open','locked') ORDER BY day").fetchall()
+        for r in rows:
             d = dt.date.fromisoformat(r["day"])
+            if r["status"] == "open" and r["message_id"] is None and ny < lock_at(d):
+                self.post(d)  # the first post failed (Telegram down): keep trying until the lock
             if r["status"] == "open" and ny >= lock_at(d):
                 self.lock(d)
             if ny >= lock_at(d):
@@ -181,9 +187,13 @@ class Game:
         for s in stocks:  # store JSON-safe headlines
             s["headlines"] = [{"title": h["title"], "published": h["published"].isoformat() if h.get("published") else None}
                               for h in s["headlines"]]
+        self.store.add_round(day.isoformat(), stocks, now.isoformat())
+        self.post(day)
+
+    def post(self, day: dt.date) -> None:
         key = day.isoformat()
-        self.store.add_round(key, stocks, now.isoformat())
-        mid = self.tg.send(round_text(day, self.store.stocks(key)), buttons(day, stocks))
+        stocks = self.store.stocks(key)
+        mid = self.tg.send(round_text(day, stocks, self.voters(key)), buttons(day, stocks))
         if mid:
             self.store.set_message(key, mid)
 
@@ -222,6 +232,10 @@ class Game:
         if ny < at(day, market.close_time(day)) + SETTLE_DELAY:
             return
         pending = [s for s in self.store.stocks(key) if s["result"] is None]
+        last = self._settle_tried.get(key)
+        if pending and last and ny - last < SETTLE_RETRY:
+            return
+        self._settle_tried[key] = ny
         if pending:
             try:
                 q = self.quotes([s["ticker"] for s in pending])

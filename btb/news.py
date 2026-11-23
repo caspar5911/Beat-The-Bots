@@ -14,7 +14,7 @@ UA = "Mozilla/5.0 (X11; Linux x86_64) BeatTheBot/0.1"
 
 
 def _feeds(ticker: str, name: str = "") -> list[str]:
-    word = _keyword(name) if name else ""
+    word = _keywords(ticker, name)[0] if _keywords(ticker, name) else ""
     q = urllib.parse.quote(f'"{word}" OR {ticker} stock' if word else f"{ticker} stock")
     return [f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US",
             f"https://news.google.com/rss/search?q={q}+when:2d&hl=en-US&gl=US&ceid=US:en"]
@@ -60,6 +60,9 @@ def dedupe_recent(items: list[dict], now: dt.datetime, hours: int = 36, limit: i
 
 
 GENERIC = {"the", "inc", "corp", "group", "holdings", "company", "and", "co"}
+# Company names whose first word is too generic to find or filter headlines with.
+KEYWORDS = {"AMD": ["Advanced Micro"], "SMCI": ["Super Micro", "Supermicro"], "KO": ["Coca-Cola"],
+            "ARM": ["Arm Holdings"], "LLY": ["Eli Lilly", "Lilly"]}
 
 
 def _keyword(name: str) -> str:
@@ -69,12 +72,18 @@ def _keyword(name: str) -> str:
     return words[0] if len(words[0]) >= 4 or len(words) == 1 else " ".join(words[:2])
 
 
-def about(title: str, ticker: str, name: str = "") -> bool:
-    """The headline names the stock: its ticker (exact case) or the main word(s) of its company name."""
-    if re.search(rf"(?<![A-Za-z]){re.escape(ticker)}(?![A-Za-z])", title):
-        return True
+def _keywords(ticker: str, name: str) -> list[str]:
+    if ticker in KEYWORDS:
+        return KEYWORDS[ticker]
     kw = _keyword(name)
-    return bool(kw) and re.search(rf"\b{re.escape(kw)}\b", title, re.I) is not None
+    return [kw] if kw else []
+
+
+def about(title: str, ticker: str, name: str = "") -> bool:
+    """The headline names the stock: its ticker (exact case, 2+ letters) or the main word(s) of its company name."""
+    if len(ticker) >= 2 and re.search(rf"(?<![A-Za-z]){re.escape(ticker)}(?![A-Za-z])", title):
+        return True
+    return any(re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", title, re.I) for kw in _keywords(ticker, name))
 
 
 def headlines(ticker: str, name: str = "", now: dt.datetime | None = None, session=None) -> list[dict]:
