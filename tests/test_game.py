@@ -1106,3 +1106,45 @@ def test_intro_matches_what_is_in_the_round():
     assert "whole industry" in g.Game.what_lines([fund, fund])
     assert "suggested by players" in g.Game.what_lines([stock, fund])
     assert "one company's stock" in g.Game.what_lines([stock, stock])
+
+
+
+def test_add_a_stock_to_todays_game():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    q.set("NVDA", last=180.0, prev_close=176.0, pre=180.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    text, row = game.on_command("/add nvda", 7, "Ann", ny(DAY, 8))
+    assert "Ann added <b>NVDA</b>" in text and "Skip it" in text and [cb for _, cb in row[0]][0] == "v|20261123|NVDA|U|s"
+    stocks = store.stocks(DAY.isoformat())
+    assert [s["ticker"] for s in stocks] == ts + ["NVDA"] and stocks[-1]["note"] == "➕ added by Ann"
+    assert stocks[-1]["ai_call"] == "UP"                                       # the AI picks it too
+    assert "NVDA" in tg.edits[-1][1] and "➕ added by Ann" in tg.edits[-1][1]   # game message updated
+    assert "already in today's game" in game.on_command("/add NVDA", 8, "Ben", ny(DAY, 8))[0]
+    for t in ("TSLA", "KO"):
+        q.set(t, last=10.0, prev_close=10.0, when=ny(DAY - dt.timedelta(days=3), 16))
+        game.on_command(f"/add {t}", 8, "Ben", ny(DAY, 8))
+    q.set("AAPL", last=10.0, prev_close=10.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    assert "already has 3 added" in game.on_command("/add AAPL", 8, "Ben", ny(DAY, 8))[0]
+    # picking an added stock is optional: the reminder only counts the main stocks
+    store.player(9, "Cat"); store.member(CHAT, 9); store.vote("2026-11-20", "XLK", 9, "UP", "x")
+    for r in game.buttons(DAY, store.stocks(DAY.isoformat()))[:3]:
+        game.on_button(r[1][1], 9, "Cat", ny(DAY, 9))
+    game.on_button(row[0][1][1], 8, "Ben", ny(DAY, 9))                       # Ben has an opinion on NVDA
+    game.tick(ny(DAY, 9, 20))
+    assert "Cat" not in tg.sent[-1][0]
+    game.tick(ny(DAY, 9, 30))
+    assert "<b>NVDA</b> group ⬆️ 1" in tg.sent[-1][0]
+    assert "picks are closed" in game.on_command("/add AAPL", 7, "Ann", ny(DAY, 9, 31))[0]
+    for t in ts + ["NVDA", "TSLA", "KO"]:
+        q.set(t, open_=100.0, last=100.0, when=ny(DAY, 9, 36))
+    settle_day(game, q, ts + ["NVDA", "TSLA", "KO"], DAY, [101.0, 101.0, 101.0, 102.0, 99.0, 99.0])
+    assert "NVDA" in next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
+    ben = next(r for r in store.scores() if r["user_id"] == 8)
+    assert (ben["points"], ben["played"]) == (3, 1)
+
+
+def test_add_before_the_game_is_out_counts_as_suggestion():
+    game, store, tg, q, calls, clock = make()
+    q.set("NVDA", last=180.0, prev_close=176.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    reply = game.on_command("/add NVDA", 7, "Ann", ny(DAY, 6))[0]
+    assert "suggested <b>NVDA</b>" in reply and "counts as a suggestion" in reply

@@ -167,6 +167,16 @@ class Store:
                      json.dumps(s.get("headlines", [])), s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf"),
                      s.get("note", "")))
 
+    def add_stock(self, day: str, s: dict) -> None:
+        """A stock added to an open round (goes last)."""
+        pos = self.db.execute("SELECT COALESCE(MAX(pos), -1) + 1 FROM stocks WHERE day=?", (day,)).fetchone()[0]
+        self.db.execute(
+            "INSERT INTO stocks (day, pos, ticker, name, prev_close, pre_price, headlines, ai_call, ai_reason, ai_conf, note)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (day, pos, s["ticker"], s["name"], s.get("prev_close"), s.get("pre_price"), json.dumps(s.get("headlines", [])),
+             s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf"), s.get("note", "")))
+        self.db.commit()
+
     def set_status(self, day: str, status: str) -> None:
         self.db.execute("UPDATE rounds SET status=? WHERE day=?", (status, day))
         self.db.commit()

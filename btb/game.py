@@ -76,6 +76,8 @@ ETF_NEWS = {  # (news search, words a headline must contain)
     "XLB": ('"materials stocks" OR "copper prices" OR "chemical stocks"', ["copper", "chemical", "steel", "materials stocks"]),
 }
 SUGGESTED_MAX = 2                 # most-suggested stocks that join a game
+ADDED_MAX = 3                     # stocks players may add to today's game before picks close
+ADDED = "➕ added by "
 
 POST_AT = dt.time(7, 30)         # 20:30 Singapore in winter: two hours to play
 LAST_POST = dt.time(9, 20)       # too late to give people time to play: skip the day
@@ -108,7 +110,8 @@ TICKER = re.compile(r"^[A-Z][A-Z.]{0,5}$")
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
-COMMANDS = [("today", "Today's game"), ("suggest", "Suggest a stock for the next game"),
+COMMANDS = [("today", "Today's game"), ("add", "Add a stock to today's game"),
+            ("suggest", "Suggest a stock for the next game"),
             ("pick", "Pick any stock yourself, e.g. /pick NVDA"),
             ("board", "Scores"), ("me", "My score"), ("report", "How good are my choices?"),
             ("bot", "How good is the AI?"), ("practice", "Quick 2-minute game"), ("help", "How to play")]
@@ -282,6 +285,7 @@ def help_text(title: str, bot: str) -> str:
             "⬆️ / ⬇️ <b>think so</b>: +3 if right, −4 if wrong\n"
             "Not sure? Don't tap (0 points).\n"
             f"{esc(bot)} (our AI) plays too. Results come the next morning.\n\n"
+            "➕ /add NVDA: add a stock to today's game (anyone can pick it, or skip it)\n"
             "💡 /suggest NVDA: suggest a stock for the next game (the 2 most-suggested join it)\n"
             "📌 /pick NVDA: pick any US stock yourself (3 a day, own score)\n"
             "📊 /report: how good your choices are · /board: scores · /bot: how good the AI is\n"
@@ -356,6 +360,60 @@ class Game:
             return ("Most lines below are whole industries (funds that hold many companies); the 💡 ones are stocks "
                     "suggested by players.")
         return "Each line below is one company's stock."
+
+    def add_command(self, arg: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None):
+        """Add a stock to today's open game: it joins the game message; picking it is optional."""
+        ticker = arg.upper().lstrip("$")
+        ny = now.astimezone(NY)
+        key = ny.date().isoformat()
+        r = self.store.round(key)
+        if not ticker:
+            return (f"➕ Add a stock to today's game: type /add and the ticker, like /add NVDA (up to {ADDED_MAX} a day). "
+                    "Anyone can pick it, or skip it."), None
+        if r is None or r["status"] != "open" or ny >= lock_at(ny.date()):
+            if r is None and market.is_trading_day(ny.date()) and ny.time() < POST_AT:
+                return self.suggest_command(arg, user_id, name, now) + "\n(Today's game isn't out yet, so this counts as a suggestion for it.)", None
+            return ("Today's picks are closed, so I can't add to today's game. "
+                    + self.suggest_command(arg, user_id, name, now)), None
+        if not TICKER.match(ticker):
+            return f"'{esc(arg)}' doesn't look like a US stock ticker. Try something like /add AAPL.", None
+        stocks = self.store.stocks(key)
+        if ticker in {s["ticker"] for s in stocks}:
+            return f"{esc(ticker)} is already in today's game. Tap its buttons in the game message.", None
+        if sum((s.get("note") or "").startswith(ADDED) for s in stocks) >= ADDED_MAX:
+            return f"Today's game already has {ADDED_MAX} added stocks. Try /suggest {esc(ticker)} for the next game.", None
+        try:
+            info = self.quotes([ticker]).get(ticker)
+        except Exception:
+            info = None
+        if not info or not info.get("last"):
+            return f"I can't find {esc(ticker)}. Check the ticker (like AAPL or NVDA) and try again.", None
+        s = {"ticker": ticker, "name": ETF_LABEL.get(ticker) or info.get("name") or ticker,
+             "prev_close": info.get("prev_close"), "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "",
+             "ai_conf": None, "note": f"{ADDED}{name}"}
+        try:
+            heads = self.news(ticker, s["name"])
+        except Exception:
+            heads = []
+        if self.ai_ready():
+            got = self.call_ai(ticker, s["name"], info, heads)
+            if got:
+                s["ai_call"], s["ai_reason"], s["ai_conf"] = got
+        s["headlines"] = [{"title": h["title"], "published": h["published"].isoformat() if h.get("published") else None}
+                          for h in heads]
+        self.store.player(user_id, name)
+        self.store.add_stock(key, s)
+        day, stocks = ny.date(), self.store.stocks(key)
+        for chat in self.chat_ids():
+            mid = self.store.post_id(key, chat)
+            if mid:
+                self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
+        k = day.strftime("%Y%m%d")
+        row = [[(f"⏫ {ticker}", f"v|{k}|{ticker}|U|s"), ("⬆️", f"v|{k}|{ticker}|U|l"),
+                ("⬇️", f"v|{k}|{ticker}|D|l"), (f"⏬ {ticker}", f"v|{k}|{ticker}|D|s")]]
+        return (f"➕ {esc(name)} added <b>{esc(ticker)}</b> ({esc(s['name'])}) to today's game · {_move(s)}.\n"
+                f"Got an opinion? Tap below (or in the game message). Not sure? Skip it, no points lost. "
+                f"Picks close at {_sg(lock_at(day))} Singapore time."), row
 
     @staticmethod
     def buttons(day: dt.date, stocks: list[dict]) -> list:
@@ -623,13 +681,15 @@ class Game:
         key = day.isoformat()
         if self.store.get(f"reminded:{key}:{chat_id}"):
             return
-        n = len(self.store.stocks(key))
+        core = [s["ticker"] for s in self.store.stocks(key) if not (s.get("note") or "").startswith(ADDED)]
+        n = len(core)
         since = (day - dt.timedelta(days=ACTIVE_DAYS)).isoformat()
         rows = self.store.db.execute(
-            "SELECT p.user_id, p.name, (SELECT COUNT(*) FROM votes t WHERE t.day=? AND t.user_id=p.user_id) AS today "
+            "SELECT p.user_id, p.name, (SELECT COUNT(*) FROM votes t WHERE t.day=? AND t.user_id=p.user_id "
+            f"AND t.ticker IN ({','.join('?' * len(core)) or "''"})) AS today "
             "FROM players p JOIN members m ON m.user_id=p.user_id AND m.chat_id=? WHERE p.user_id != ? AND EXISTS "
             "(SELECT 1 FROM votes v WHERE v.user_id=p.user_id AND v.day >= ? AND v.day < ?) ORDER BY p.name",
-            (key, chat_id, BOT_ID, since, key)).fetchall()
+            (key, *core, chat_id, BOT_ID, since, key)).fetchall()
         missing = [r for r in rows if r["today"] < n]
         text = "⏰ <b>10 minutes left to pick!</b> "
         if missing:
@@ -996,6 +1056,8 @@ class Game:
             return self.extra_command(cmd[1:], arg, chat_id), None
         if cmd == "/pick":
             return self.own_command(parts[1] if len(parts) > 1 else "", now)
+        if cmd == "/add":
+            return self.add_command(parts[1] if len(parts) > 1 else "", user_id, name, now, chat_id)
         if cmd == "/suggest":
             return self.suggest_command(parts[1] if len(parts) > 1 else "", user_id, name, now), None
         if cmd == "/today":

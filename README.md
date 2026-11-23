@@ -41,6 +41,8 @@ Tap a pick again to undo it. 🚀 Naming the stock with the biggest open-to-clos
 - `/league`, `/league join`, `/league leave`: groups vs groups by average points per player (opt-in: joining shows
   the group's name to the other groups)
 - `/practice`: a 2-minute unscored round on the last completed session, playable at any hour
+- `/add NVDA`: add a stock to **today's** game until picks close (up to 3 a day). It joins the game message with
+  its own buttons; picking it is optional and reminders ignore it. After the close it becomes a suggestion.
 - `/suggest NVDA`: suggest a stock for the next game; the 2 most-suggested replace 2 of its funds (one
   suggestion per player per game; a new one replaces the old)
 - `/pick NVDA`: an **own pick** on any US stock, any time. During the session it starts from the current price
