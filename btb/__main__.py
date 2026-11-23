@@ -69,8 +69,9 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
             tg.answer(cq["id"], "This game is played in its Telegram group.")
             return
         data = cq.get("data", "")
-        if data.startswith("g|"):  # /select menu: toggle an industry, then redraw the menu
-            toast, text, rows = game.on_select(data, int(user.get("id", -1)), display_name(user), now, int(chat["id"]))
+        if data.startswith(("g|", "z|")):  # /select menu taps and restart buttons: redraw that message
+            act = game.on_select if data.startswith("g|") else game.on_restart
+            toast, text, rows = act(data, int(user.get("id", -1)), display_name(user), now, int(chat["id"]))
             tg.answer(cq["id"], toast)
             mid = (cq.get("message") or {}).get("message_id")
             if text and mid:

@@ -126,6 +126,7 @@ QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
 COMMANDS = [("today", "Today's game"), ("select", "Tap to choose industries for the game"),
+            ("restart", "Restart today's game (asks first)"),
             ("set", "Choose today's lines, e.g. /set chips"),
             ("add", "Add a stock to today's game"),
             ("suggest", "Suggest a stock for the next game"),
@@ -477,6 +478,8 @@ class Game:
         buttons = [(("✅ " if t in chosen else "") + self.label({"ticker": t}).split(" · ")[0], f"g|{key}|{t}")
                    for t in ETF_POOL]
         rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [[("✔️ Done", f"g|{key}|done")]]
+        if live:
+            rows.append([("🔄 Restart today's game", f"z|{key}|ask")])
         which = "tonight's game (it changes right away)" if live else f"the game on {day:%a %d %b}"
         auto = "" if chosen or live else " Nothing chosen yet, so the game picks 5 by itself."
         text = (f"🎛 <b>Choose industries</b> for {which}. Tap to add ✅ or remove.{auto}"
@@ -533,6 +536,53 @@ class Game:
                     self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
         text, rows = self.select_menu(now, chat_id)
         return toast, text, rows
+
+    def restart_ask(self, now: dt.datetime, chat_id: int | None):
+        if self.s.chat_id and str(chat_id) != str(self.s.chat_id):
+            return "Only the main group can restart the game.", None
+        ny = now.astimezone(NY)
+        day = ny.date()
+        r = self.store.round(day.isoformat())
+        if r is None:
+            return ("There's no game today yet. It's posted at "
+                    f"{_sg(at(day, POST_AT)) if market.is_trading_day(day) else 'the next trading day'}."), None
+        if r["status"] != "open" or ny >= lock_at(day):
+            return "Today's picks are closed, so the game can't be restarted any more.", None
+        picks = sum(1 for v in self.store.votes(day.isoformat()) if v["user_id"] != BOT_ID)
+        key = day.strftime("%Y%m%d")
+        return (f"🔄 Restart tonight's game? A new game is posted straight away"
+                + (f" and <b>{picks} pick{'s' if picks != 1 else ''} will be deleted</b>." if picks else ".")), \
+            [[("✅ Yes, restart", f"z|{key}|yes"), ("✖️ No", f"z|{key}|no")]]
+
+    def on_restart(self, data: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None):
+        """A tap on the restart buttons: (toast, new text for that message or None, its buttons or None)."""
+        if self.s.chat_id and str(chat_id) != str(self.s.chat_id):
+            return "Only the main group can restart the game.", None, None
+        try:
+            _, d, what = data.split("|")
+        except ValueError:
+            return "Unknown button.", None, None
+        ny = now.astimezone(NY)
+        day = ny.date()
+        if d != day.strftime("%Y%m%d"):
+            return "That button is for an earlier game.", "🔄 (Old restart button.)", None
+        if what == "ask":
+            text, rows = self.restart_ask(now, chat_id)
+            return "Restart?", text, rows
+        if what == "no":
+            return "OK, not restarted.", "🔄 Not restarted.", None
+        r = self.store.round(day.isoformat())
+        if r is None or r["status"] != "open" or ny >= lock_at(day):
+            return "Picks are closed: too late to restart.", "🔄 Too late to restart: picks are closed.", None
+        key = day.isoformat()
+        for chat in self.chat_ids():
+            mid = self.store.post_id(key, chat)
+            if mid:
+                self.edit(chat, mid, f"♻️ <b>This game was restarted by {esc(name)}.</b> Please pick on the new message "
+                                     "below.", None)
+        self.store.delete_round(key)
+        self.create(day, now, ai_until=lock_at(day) - dt.timedelta(minutes=3))
+        return "Restarted!", f"🔄 Restarted by {esc(name)}. The new game is below.", None
 
     def make_line(self, ticker: str, info: dict, note: str = "") -> dict:
         """A game line for a ticker: name, latest close, early price, headlines and the AI's hidden pick."""
@@ -986,7 +1036,7 @@ class Game:
         self._tried[(what, key)] = ny
         return True
 
-    def create(self, day: dt.date, now: dt.datetime) -> None:
+    def create(self, day: dt.date, now: dt.datetime, ai_until: dt.datetime | None = None) -> None:
         preset = json.loads(self.store.get(f"preset:{day.isoformat()}", "[]"))
         ideas = [] if preset else self.store.suggested(day.isoformat())
         try:
@@ -1017,7 +1067,7 @@ class Game:
                  "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "", "ai_conf": None,
                  "note": notes.get(t, "")}
             s["headlines"] = [{"title": h["title"], "published": h["published"]} for h in self.news(t, s["name"])]
-            if ready and self.clock() < at(day, AI_DEADLINE):
+            if ready and self.clock() < (ai_until or at(day, AI_DEADLINE)):
                 got = self.call_ai(t, s["name"], info, s["headlines"])
                 if got:
                     s["ai_call"], s["ai_reason"], s["ai_conf"] = got
@@ -1452,6 +1502,8 @@ class Game:
             return self.extra_command(cmd[1:], arg, chat_id), None
         if cmd == "/pick":
             return self.own_command(parts[1] if len(parts) > 1 else "", now)
+        if cmd == "/restart":
+            return self.restart_ask(now, chat_id)
         if cmd in ("/select", "/industries"):
             return self.select_menu(now, chat_id)
         if cmd == "/set":

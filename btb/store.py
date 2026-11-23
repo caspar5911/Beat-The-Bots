@@ -177,6 +177,13 @@ class Store:
              s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf"), s.get("note", "")))
         self.db.commit()
 
+    def delete_round(self, day: str) -> None:
+        """Everything about one day's game (for a restart). Own picks and suggestions are kept."""
+        with self.db:
+            for t in ("votes", "bonus", "reasons", "stocks", "posts", "rounds"):
+                self.db.execute(f"DELETE FROM {t} WHERE day=?", (day,))
+            self.db.execute("DELETE FROM kv WHERE k LIKE ? AND k NOT LIKE 'preset:%'", (f"%:{day}%",))
+
     def remove_stock(self, day: str, ticker: str) -> None:
         with self.db:
             for t in ("stocks", "votes"):

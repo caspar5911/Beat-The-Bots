@@ -1307,8 +1307,8 @@ def test_select_menu_live_and_for_the_next_game():
     ts = full_day(game, store, tg, q, clock)
     q.set("XLE", last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
     text, rows = game.on_command("/select", 7, "Ann", ny(DAY, 8))
-    assert "tonight's game" in text and rows[-1][0][0] == "✔️ Done"
-    flat = [b for r in rows[:-1] for b in r]
+    assert "tonight's game" in text and rows[-2][0][0] == "✔️ Done" and rows[-1][0][0] == "🔄 Restart today's game"
+    flat = [b for r in rows[:-2] for b in r]
     assert len(flat) == len(g.ETF_POOL) and sum(b[0].startswith("✅") for b in flat) == len(ts)
     oil = next(cb for label, cb in flat if "Oil" in label)
     cq = {"id": "c", "data": oil, "from": {"id": 7, "first_name": "Ann"},
@@ -1329,3 +1329,33 @@ def test_select_menu_live_and_for_the_next_game():
     game.on_select("g|20261124|XLV", 7, "Ann", ny(DAY, 10), CHAT)
     assert json.loads(store.get("preset:2026-11-24")) == ["XLV"]
     assert "earlier game" in game.on_select("g|20261123|XLV", 7, "Ann", ny(DAY, 10), CHAT)[0]
+
+
+
+def test_restart_todays_game():
+    from btb.__main__ import handle
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    old_post = store.post_id(DAY.isoformat(), CHAT)
+    b = choices(game.buttons(DAY, store.stocks(DAY.isoformat())))
+    game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 8))
+    game.on_button(b[1][1][1], 8, "Ben", ny(DAY, 8))
+    store.set(f"preset:{DAY.isoformat()}", json.dumps(["XLE"]))
+    q.set("XLE", last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    text, rows = game.on_command("/restart", 7, "Ann", ny(DAY, 9))
+    assert "<b>2 picks will be deleted</b>" in text and [cb for _, cb in rows[0]] == ["z|20261123|yes", "z|20261123|no"]
+    cq = {"id": "c", "data": "z|20261123|no", "from": {"id": 7, "first_name": "Ann"},
+          "message": {"chat": {"id": CHAT, "type": "group"}, "message_id": 77}}
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 9))
+    assert tg.answers[-1] == "OK, not restarted." and len(store.votes(DAY.isoformat())) == 2
+    n_calls = len(calls)
+    handle(game, tg, {"callback_query": dict(cq, data="z|20261123|yes")}, ny(DAY, 9, 20))
+    assert tg.answers[-1] == "Restarted!"
+    assert any(mid == old_post and "restarted by Ann" in text for mid, text in tg.edits)
+    assert store.votes(DAY.isoformat()) == [] or all(v["user_id"] == BOT_ID for v in store.votes(DAY.isoformat()))
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["XLE"]        # the /select choice is used
+    assert store.post_id(DAY.isoformat(), CHAT) not in (None, old_post) or tg.sent[-1][0].startswith("🎯")
+    assert len(calls) > n_calls                                                    # AI picks again at 09:20 NY
+    assert "can't be restarted" in game.on_command("/restart", 7, "Ann", ny(DAY, 9, 31))[0]
+    menu = game.select_menu(ny(DAY, 9), CHAT)[1]
+    assert menu[-1][0][1] == "z|20261123|ask"
