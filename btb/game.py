@@ -230,6 +230,12 @@ def icon(call: str, conf: str | None) -> str:
     return ICON.get((call, conf or "lean"), ARROW.get(call, "?"))
 
 
+def pick_words(call: str, conf: str | None) -> str:
+    """'⏫ very sure up', '⬆️ up', '⬇️ down', '⏬ very sure down'."""
+    word = "up" if call == "UP" else "down"
+    return f"{icon(call, conf)} {'very sure ' if conf == 'sure' else ''}{word}"
+
+
 def pct(k: int, n: int) -> str:
     return f"{k}/{n} ({k / n:.0%})" if n else "0/0"
 
@@ -880,15 +886,17 @@ class Game:
             if not mine:
                 lines.append("👥 nobody picked")
             elif len(mine) <= 8:
-                lines += [f"👤 {esc(v['name'])} {icon(v['call'], v.get('conf'))}" for v in mine]
+                lines += [f"{i}. {esc(v['name'])} · {pick_words(v['call'], v.get('conf'))}" for i, v in enumerate(mine, 1)]
             else:
                 up = sum(v["call"] == "UP" for v in mine)
                 lines.append(f"👥 ⬆️ {up} · ⬇️ {len(mine) - up}")
             if s["ai_call"]:
                 conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
                 reason = (s["ai_reason"] or "").strip()
-                lines.append(f"🤖 {esc(self.short)} {icon(s['ai_call'], conf)} ({(s['ai_conf'] or 0.5):.0%} sure)"
-                             + (f": <i>“{esc(reason)}”</i>" if reason else ""))
+                lines.append(f"🤖 <b>{esc(self.short)}</b> · {pick_words(s['ai_call'], conf)} "
+                             f"({(s['ai_conf'] or 0.5):.0%} sure)")
+                if reason:
+                    lines.append(f"💬 <i>“{esc(reason)}”</i>")
                 if s["ticker"] in crowd and crowd[s["ticker"]] != s["ai_call"]:
                     against.append(self.label({"ticker": s["ticker"], "name": s["name"]}).split(" · ")[0].split(" ", 1)[-1])
             else:
