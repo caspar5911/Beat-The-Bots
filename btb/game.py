@@ -284,6 +284,7 @@ class Game:
         rows = [[(f"⏫ {s['ticker']}", f"v|{key}|{s['ticker']}|U|s"), ("⬆️", f"v|{key}|{s['ticker']}|U|l"),
                  ("⬇️", f"v|{key}|{s['ticker']}|D|l"), (f"⏬ {s['ticker']}", f"v|{key}|{s['ticker']}|D|s")]
                 for s in stocks]
+        rows.append([("👀 My picks", f"k|{key}")])
         return rows
 
     def split(self, key: str, chat_id: int | None) -> dict[str, dict[str, int]]:
@@ -788,6 +789,8 @@ class Game:
             self.store.member(chat_id, user_id)
         if data.startswith("w|"):
             return self.on_why(data)
+        if data.startswith("k|"):
+            return self.my_picks(data, user_id)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
         if data.startswith("o|"):
@@ -801,7 +804,7 @@ class Game:
     @staticmethod
     def is_alert(data: str) -> bool:
         """Answers shown as a pop-up the player must close (longer text)."""
-        return data.startswith("w|")
+        return data.startswith(("w|", "k|"))
 
     def on_why(self, data: str) -> str:
         try:
@@ -843,11 +846,43 @@ class Game:
         mine = next((v for v in self.store.votes(key) if v["user_id"] == user_id and v["ticker"] == ticker), None)
         if mine and mine["call"] == call and mine.get("conf") == conf:
             self.store.unvote(key, ticker, user_id)
-            return f"{ticker}: pick cancelled (0 points)."
+            return f"{ticker}: pick cancelled. Your picks: {self.picks_line(key, user_id)}"
         self.store.vote(key, ticker, user_id, call, now.isoformat(), conf)
         win, lose = CONF[conf]
-        return (f"{ticker} {icon(call, conf)}: {CONF_LABEL[conf].lower()} it goes {'up' if call == 'UP' else 'down'}. "
-                f"+{win} if right, {lose} if wrong. Tap again to cancel.")
+        return (f"✅ {ticker} {icon(call, conf)} {CONF_LABEL[conf].lower()} {'up' if call == 'UP' else 'down'} "
+                f"(+{win} / {lose}). Your picks: {self.picks_line(key, user_id)}")
+
+    def picks_line(self, key: str, user_id: int) -> str:
+        mine = {v["ticker"]: v for v in self.store.votes(key) if v["user_id"] == user_id}
+        return " · ".join(f"{s['ticker']} " + (icon(mine[s['ticker']]["call"], mine[s['ticker']].get("conf"))
+                                               if s["ticker"] in mine else "–") for s in self.store.stocks(key))
+
+    def my_picks(self, data: str, user_id: int) -> str:
+        """Private pop-up with the player's picks for that round (and results once known)."""
+        try:
+            key = dt.datetime.strptime(data.split("|")[1], "%Y%m%d").date().isoformat()
+        except (IndexError, ValueError):
+            return "Unknown button."
+        mine = {v["ticker"]: v for v in self.store.votes(key) if v["user_id"] == user_id}
+        stocks = self.store.stocks(key)
+        if not stocks:
+            return "That game is over."
+        if not mine:
+            return "You haven't picked anything yet. Tap ⬆️ ⬇️ ⏫ ⏬ next to a stock."
+        lines = ["Your picks:"]
+        for s in stocks:
+            v = mine.get(s["ticker"])
+            if not v:
+                lines.append(f"{s['ticker']}: skipped")
+                continue
+            label = f"{s['ticker']} {icon(v['call'], v.get('conf'))} {CONF_LABEL.get(v.get('conf'), '').lower()}"
+            if s["result"] in ("UP", "DOWN"):
+                label += f" {'✅' if v['call'] == s['result'] else '❌'} {pts(points(v['call'], s['result'], 0, v.get('conf')))}"
+            lines.append(label)
+        r = self.store.round(key)
+        if r and r["status"] == "open":
+            lines.append(f"Change until {_sg(lock_at(dt.date.fromisoformat(key)))} (Singapore).")
+        return "\n".join(lines)[:200]
 
     def on_mover(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
         got, err = self._open_round(data, now)

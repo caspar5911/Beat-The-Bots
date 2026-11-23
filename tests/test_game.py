@@ -83,7 +83,7 @@ def make(ai=True, ai_ready=True, clock_at=None, conf=None, banter=None, mover=No
 
 def lean_rows(b):
     """Stock rows reordered as [lean up, lean down, sure up, sure down] (the keyboard is ⏫ ⬆️ ⬇️ ⏬ per stock)."""
-    return [[r[1], r[2], r[0], r[3]] for r in b]
+    return [[r[1], r[2], r[0], r[3]] for r in b[:-1]]
 
 
 def tickers(store, day=DAY):
@@ -127,15 +127,15 @@ def test_whole_day():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
     text, buttons = tg.sent[0]
-    assert [len(r) for r in buttons] == [4, 4, 4]                      # just the stocks: no extra rows
+    assert [len(r) for r in buttons] == [4, 4, 4, 1] and buttons[-1][0][1] == "k|20261123"   # + "My picks"
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
     assert "Huat or Not?" in text and "Not money advice" in text and "How to play" in text and "Not sure? Skip it" in text
     assert "goes up" not in text                     # the AI's calls stay hidden until the lock
     assert calls == ts
     up, down = buttons[0][0][1], buttons[0][1][1]
-    assert "+3 if right, -4 if wrong" in game.on_button(up, 7, "Ann", ny(DAY, 9, 0))
-    assert "think so it goes down" in game.on_button(down, 7, "Ann", ny(DAY, 9, 10))    # changed mind: last one counts
+    assert "think so up (+3 / -4)" in game.on_button(up, 7, "Ann", ny(DAY, 9, 0))
+    assert "think so down" in game.on_button(down, 7, "Ann", ny(DAY, 9, 10))    # changed mind: last one counts
     for row in buttons[1:]:
         game.on_button(row[0][1], 7, "Ann", ny(DAY, 9, 0))
     game.on_button(buttons[0][0][1], 8, "Ben", ny(DAY, 9, 29, 59))
@@ -258,7 +258,7 @@ def test_commands_and_group_handling():
     assert tg.answers[-1].startswith("This game") and not store.votes(DAY.isoformat())
     handle(game, tg, {"callback_query": {"id": "x", "data": cb, "from": {"id": 5, "first_name": "Eve"},
                                          "message": {"chat": {"id": CHAT, "type": "group"}}}}, ny(DAY, 9))
-    assert "very sure it goes up" in tg.answers[-1] and store.votes(DAY.isoformat())[0]["name"] == "Eve"
+    assert "very sure up" in tg.answers[-1] and store.votes(DAY.isoformat())[0]["name"] == "Eve"
     assert 5 in store.members(CHAT)
     assert "Unknown" in game.on_vote("garbage", 5, "Eve", ny(DAY, 9))
     assert "is over" in game.on_vote("v|20261123|ZZZZ|U", 5, "Eve", ny(DAY, 9))
@@ -397,7 +397,7 @@ def test_confidence_rules_and_scoring():
     ts = full_day(game, store, tg, q, clock)
     b = game.buttons(DAY, store.stocks(DAY.isoformat()))
     sure_up, lean_up, lean_down, sure_down = (x[1] for x in b[0])
-    assert "+5 if right, -11 if wrong" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9))
+    assert "very sure up (+5 / -11)" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9))
     assert "cancelled" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 1))     # tap again: skip
     assert not store.votes(DAY.isoformat())
     game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 2))
@@ -1022,3 +1022,24 @@ def test_own_pick_without_a_captured_open_is_void():
     q.set("KO", open_=62.0, last=63.0, prev_close=61.0, when=ny(nxt, 10))      # bot was down all of the 23rd
     game.tick(ny(nxt, 10))
     assert store.own()[0]["result"] == "VOID" and "no result" in tg.sent[-1][0]
+
+
+
+def test_my_picks_popup_and_toast():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    mine = b[-1][0][1]
+    assert game.is_alert(mine)
+    assert "haven't picked" in game.on_button(mine, 7, "Ann", ny(DAY, 9))
+    toast = game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 9))
+    assert toast.startswith(f"✅ {ts[0]} ⬆️ think so up (+3 / -4). Your picks: {ts[0]} ⬆️ · {ts[1]} – · {ts[2]} –")
+    game.on_button(b[1][3][1], 7, "Ann", ny(DAY, 9))
+    pop = game.on_button(mine, 7, "Ann", ny(DAY, 9, 1))
+    assert f"{ts[0]} ⬆️ think so" in pop and f"{ts[1]} ⏬ very sure" in pop and f"{ts[2]}: skipped" in pop
+    assert "Change until 22:30" in pop and len(pop) <= 200
+    assert "cancelled. Your picks:" in game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 9, 2))
+    game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 9, 3))
+    settle_day(game, q, ts, DAY, [101.0, 99.0, 101.0])
+    pop = game.on_button(mine, 7, "Ann", ny(DAY, 17))
+    assert f"{ts[0]} ⬆️ think so ✅ 3 pts" in pop and f"{ts[1]} ⏬ very sure ✅ 5 pts" in pop and "Change" not in pop
