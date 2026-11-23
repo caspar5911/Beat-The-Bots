@@ -236,6 +236,12 @@ def pick_words(call: str, conf: str | None) -> str:
     return f"{icon(call, conf)} {'very sure ' if conf == 'sure' else ''}{word}"
 
 
+def stakes(conf: str | None) -> str:
+    """'(+5 or −11)' for very sure, '(+3 or −4)' otherwise."""
+    win, lose = CONF.get(conf or "lean", CONF["lean"])
+    return f"(+{win} or −{abs(lose)})"
+
+
 def pct(k: int, n: int) -> str:
     return f"{k}/{n} ({k / n:.0%})" if n else "0/0"
 
@@ -592,6 +598,46 @@ class Game:
         self.store.set(f"draft:{key}", "[]")
         return "Restarted!", f"🔄 Restarted by {esc(name)}. The new game is below.", None
 
+    @staticmethod
+    def live_button(day: dt.date) -> list:
+        return [[("📈 How's it going?", f"h|{day.strftime('%Y%m%d')}")]]
+
+    def on_live(self, data: str, now: dt.datetime, chat_id: int | None) -> str:
+        """Private pop-up after picks close: each line's move since the open and who would win if it ended now."""
+        try:
+            day = dt.datetime.strptime(data.split("|")[1], "%Y%m%d").date()
+        except (IndexError, ValueError):
+            return "Unknown button."
+        key = day.isoformat()
+        r = self.store.round(key)
+        if r is None:
+            return "That game is over."
+        if r["status"] == "settled":
+            return "The final results are out: see the 🏁 Results message."
+        stocks = self.store.stocks(key)
+        q = self.live([s["ticker"] for s in stocks], now)
+        result, parts = {}, []
+        for s in stocks:
+            info = q.get(s["ticker"]) or {}
+            today = bool(info.get("update_time")) and info["update_time"].date() == day
+            o = s["open"] or (info.get("open") if today else None)
+            last = info.get("last") if today else None
+            if o and last:
+                result[s["ticker"]] = "UP" if last > o else "DOWN" if last < o else None
+                parts.append(f"{s['ticker']} {last / o - 1:+.1%}")
+        if not parts:
+            return "The market has only just opened. Check again in a few minutes!"
+        members = self.store.members(chat_id) if chat_id is not None else None
+        totals: dict[int, list] = {}
+        for v in self.store.votes(key):
+            if v["user_id"] == BOT_ID or members is None or v["user_id"] in members:
+                t = totals.setdefault(v["user_id"], [v["name"], 0])
+                t[1] += points(v["call"], result.get(v["ticker"]), v["double"], v.get("conf"))
+        ranked = sorted(totals.values(), key=lambda t: -t[1])
+        who = " · ".join(f"{n.replace('🤖 ', '')} {p:+d}" for n, p in ranked)
+        text = "Since the open: " + " · ".join(parts) + ("\nIf it ended now: " + who if who else "")
+        return text if len(text) <= 200 else text[:199] + "…"
+
     def make_line(self, ticker: str, info: dict, note: str = "") -> dict:
         """A game line for a ticker: name, latest close, early price, headlines and the AI's hidden pick."""
         s = {"ticker": ticker, "name": ETF_LABEL.get(ticker) or info.get("name") or ticker,
@@ -890,13 +936,13 @@ class Game:
                 lines.append(f"👥 {len(mine)} players: ⬆️ {up} up · ⬇️ {len(mine) - up} down")
             else:
                 for n, v in enumerate(mine, 1):
-                    lines.append(f"{n}. {esc(v['name'])}: {pick_words(v['call'], v.get('conf'))}")
+                    lines.append(f"{n}. {esc(v['name'])}: {pick_words(v['call'], v.get('conf'))} {stakes(v.get('conf'))}")
                 if not mine:
                     lines.append("Nobody picked this one.")
             if s["ai_call"]:
                 conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
                 num = f"{n + 1}. " if len(mine) <= 8 else ""
-                lines.append(f"{num}🤖 {esc(self.short)}: {pick_words(s['ai_call'], conf)}, "
+                lines.append(f"{num}🤖 {esc(self.short)}: {pick_words(s['ai_call'], conf)} {stakes(conf)}, "
                              f"{(s['ai_conf'] or 0.5):.0%} sure")
                 reason = (s["ai_reason"] or "").strip()
                 if reason:
@@ -1200,7 +1246,7 @@ class Game:
             mid = self.store.post_id(key, chat)
             if mid:
                 self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)) + "\n🔒 <b>Locked.</b>", None)
-                self.send(chat, self.lock_text(day, stocks, self.voters(key, chat), chat))
+                self.send(chat, self.lock_text(day, stocks, self.voters(key, chat), chat), self.live_button(day))
 
     def capture_open(self, day: dt.date, ny: dt.datetime) -> None:
         key = day.isoformat()
@@ -1423,6 +1469,8 @@ class Game:
             return self.my_picks(data, user_id)
         if data.startswith("i|"):
             return self.on_info(data, now)
+        if data.startswith("h|"):
+            return self.on_live(data, now, chat_id)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
         if data.startswith("o|"):
@@ -1436,7 +1484,7 @@ class Game:
     @staticmethod
     def is_alert(data: str) -> bool:
         """Answers shown as a pop-up the player must close (longer text)."""
-        return data.startswith(("w|", "k|", "i|"))
+        return data.startswith(("w|", "k|", "i|", "h|"))
 
     def on_why(self, data: str) -> str:
         try:
@@ -1562,7 +1610,7 @@ class Game:
             if r["status"] == "open":
                 return self.round_text(day, stocks, self.voters(row["day"], chat_id)), self.buttons(day, stocks)
             if r["status"] == "locked":
-                return self.lock_text(day, stocks, self.voters(row["day"], chat_id), chat_id), None
+                return self.lock_text(day, stocks, self.voters(row["day"], chat_id), chat_id), self.live_button(day)
             return self.results_text(day, chat_id), self.why_buttons(day, stocks)
         if cmd == "/board":
             today, streaks = ny.date(), self.store.streaks()
