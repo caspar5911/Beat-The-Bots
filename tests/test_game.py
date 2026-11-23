@@ -1305,31 +1305,35 @@ def test_select_menu_live_and_for_the_next_game():
     from btb.__main__ import handle
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
-    q.set("XLE", last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    for t in ("XLE", "XLV"):
+        q.set(t, last=80.0, prev_close=79.0, pre=81.0, when=ny(DAY - dt.timedelta(days=3), 16))
     text, rows = game.on_command("/select", 7, "Ann", ny(DAY, 8))
-    assert "tonight's game" in text and rows[-2][0][0] == "✔️ Done" and rows[-1][0][0] == "🔄 Restart today's game"
-    flat = [b for r in rows[:-2] for b in r]
-    assert len(flat) == len(g.ETF_POOL) and sum(b[0].startswith("✅") for b in flat) == len(ts)
+    assert "Tonight's game now:" in text and rows[-1] == [("🔄 Restart with new industries", "z|20261123|ask")]
+    flat = [b for r in rows[:-1] for b in r]
+    assert len(flat) == len(g.ETF_POOL) and not any(b[0].startswith("✅") for b in flat)   # starts unticked
     oil = next(cb for label, cb in flat if "Oil" in label)
     cq = {"id": "c", "data": oil, "from": {"id": 7, "first_name": "Ann"},
           "message": {"chat": {"id": CHAT, "type": "group"}, "message_id": 55}}
     handle(game, tg, {"callback_query": cq}, ny(DAY, 8, 1))
-    assert tg.answers[-1] == "Added 🛢️ Oil & gas." and "XLE" in [s["ticker"] for s in store.stocks(DAY.isoformat())]
-    assert tg.edits[-1][0] == 55 and "✅ 🛢️ Oil & gas" in str(game.select_menu(ny(DAY, 8, 2), CHAT)[1])
-    handle(game, tg, {"callback_query": cq}, ny(DAY, 8, 2))
-    assert tg.answers[-1] == "Removed 🛢️ Oil & gas." and "XLE" not in [s["ticker"] for s in store.stocks(DAY.isoformat())]
-    for t in ts[1:]:
-        game.on_select(f"g|20261123|{t}", 7, "Ann", ny(DAY, 8, 3), CHAT)
-    assert "at least one" in game.on_select(f"g|20261123|{ts[0]}", 7, "Ann", ny(DAY, 8, 4), CHAT)[0]
-    toast, text, rows = game.on_select("g|20261123|done", 7, "Ann", ny(DAY, 8, 5), CHAT)
-    assert rows is None and "Industries for tonight" in text
-    # after the picks close, the menu works on the next game
+    assert tg.answers[-1] == "Ticked 🛢️ Oil & gas." and tg.edits[-1][0] == 55
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ts                       # nothing changes yet
+    game.on_select("g|20261123|XLV", 7, "Ann", ny(DAY, 8, 2), CHAT)
+    text, rows = game.select_menu(ny(DAY, 8, 3), CHAT)
+    assert rows[-1] == [("🔄 Restart with these 2", "z|20261123|ask")]
+    handle(game, tg, {"callback_query": cq}, ny(DAY, 8, 4))                                 # untick oil
+    game.on_select("g|20261123|XLE", 7, "Ann", ny(DAY, 8, 5), CHAT)                         # and tick it again
+    ask = game.on_restart("z|20261123|ask", 7, "Ann", ny(DAY, 8, 6), CHAT)[1]
+    assert "with 💊 Health, 🛢️ Oil &amp; gas" in ask
+    game.on_restart("z|20261123|yes", 7, "Ann", ny(DAY, 8, 7), CHAT)
+    assert [s["ticker"] for s in store.stocks(DAY.isoformat())] == ["XLV", "XLE"]
+    text, rows = game.select_menu(ny(DAY, 8, 8), CHAT)                                     # fresh after the restart
+    assert rows[-1][0][0] == "🔄 Restart with new industries" and "💊 Health" in text
+    # after the picks close, the menu sets the next game
     text, rows = game.on_command("/select", 7, "Ann", ny(DAY, 10))
-    assert "Tue 24 Nov" in text and "picks 5 by itself" in text
+    assert "Tue 24 Nov" in text and "picks 5 by itself" in text and rows[-1][0][0] == "✔️ Done"
     game.on_select("g|20261124|XLV", 7, "Ann", ny(DAY, 10), CHAT)
     assert json.loads(store.get("preset:2026-11-24")) == ["XLV"]
     assert "earlier game" in game.on_select("g|20261123|XLV", 7, "Ann", ny(DAY, 10), CHAT)[0]
-
 
 
 def test_restart_todays_game():
@@ -1358,7 +1362,7 @@ def test_restart_todays_game():
     assert len(calls) > n_calls                                                    # AI picks again at 09:20 NY
     assert "can't be restarted" in game.on_command("/restart", 7, "Ann", ny(DAY, 9, 31))[0]
     menu = game.select_menu(ny(DAY, 9), CHAT)[1]
-    assert menu[-1][0][1] == "z|20261123|ask"
+    assert menu is None or menu[-1][0][1] in ("z|20261123|ask", "g|20261124|done")
 
 
 

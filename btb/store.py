@@ -182,7 +182,8 @@ class Store:
         with self.db:
             for t in ("votes", "bonus", "reasons", "stocks", "posts", "rounds"):
                 self.db.execute(f"DELETE FROM {t} WHERE day=?", (day,))
-            self.db.execute("DELETE FROM kv WHERE k LIKE ? AND k NOT LIKE 'preset:%'", (f"%:{day}%",))
+            self.db.execute("DELETE FROM kv WHERE k LIKE ? AND k NOT LIKE 'preset:%' AND k NOT LIKE 'draft:%'",
+                            (f"%:{day}%",))
 
     def remove_stock(self, day: str, ticker: str) -> None:
         with self.db:
