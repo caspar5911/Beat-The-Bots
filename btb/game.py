@@ -19,6 +19,7 @@ import datetime as dt
 import html
 import json
 import random
+import re
 
 from . import market
 from .config import NY, SG
@@ -54,13 +55,16 @@ SURE_AT = 0.7                     # the AI plays "sure" only at this confidence 
 REASONS = {"news": "📰 News", "trend": "📈 Trend", "friends": "👥 Friends", "gut": "🎲 Feeling"}
 CONF_LABEL = {"sure": "Very sure", "lean": "Think so"}
 ICON = {("UP", "sure"): "⏫", ("UP", "lean"): "⬆️", ("DOWN", "lean"): "⬇️", ("DOWN", "sure"): "⏬"}
+OWN_PER_DAY = 3                   # own picks per player per (New York) day
+OWN_CUTOFF = dt.timedelta(minutes=30)  # picks this close to the close start at the next open instead
+TICKER = re.compile(r"^[A-Z][A-Z.]{0,5}$")
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
 COMMANDS = [("today", "Today's stocks"), ("board", "Scores"), ("me", "My score"),
             ("report", "How good are my decisions?"),
             ("card", "My score picture"), ("bot", "How good is the AI?"),
-            ("practice", "Quick 2-minute game"), ("league", "Our group vs other groups"),
+            ("pick", "Pick any stock yourself, e.g. /pick NVDA"), ("practice", "Quick 2-minute game"), ("league", "Our group vs other groups"),
             ("help", "How to play")]
 
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
@@ -217,7 +221,8 @@ def help_text(title: str, bot: str) -> str:
             f"{esc(bot)} (our AI) plays too, and shows how sure it is.\n\n"
             "Results come in the morning with a tip and a ❓ button that explains each move. Fridays: a report on "
             "your choices. Weekends: a 5-question money quiz.\n\n"
-            "/today · /board · /me · /report · /card · /bot · /league · /practice\n" + DISCLAIMER)
+            "📌 Pick any US stock yourself any time with /pick NVDA (up to 3 a day, own score).\n\n"
+            "/today · /board · /me · /report · /card · /bot · /pick · /league · /practice\n" + DISCLAIMER)
 
 
 class Game:
@@ -474,6 +479,7 @@ class Game:
             self.create(day, now)
         self.practice_reveal(now)
         self.quiz_stage(now)
+        self.own_stage(ny)
 
     def _due(self, what: str, key: str, ny: dt.datetime, gap: dt.timedelta = RETRY) -> bool:
         """Space out retries."""
@@ -804,6 +810,8 @@ class Game:
             return self.on_why(data)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
+        if data.startswith("o|"):
+            return self.on_own(data, user_id, name, now, chat_id)
         if data.startswith("m|"):
             return self.on_mover(data, user_id, name, now)
         if data.startswith("r|"):
@@ -883,6 +891,8 @@ class Game:
             return self.help_text(), None
         if cmd == "/practice":
             return self.practice_start(now, chat_id)
+        if cmd == "/pick":
+            return self.own_command(parts[1] if len(parts) > 1 else "", now)
         if cmd == "/today":
             row = self.store.db.execute("SELECT day FROM rounds ORDER BY day DESC LIMIT 1").fetchone()
             if not row:
@@ -901,6 +911,7 @@ class Game:
             return ("<b>This week</b>\n" + "\n".join(board_lines(self.store.scores(
                         week_start(today).isoformat(), today.isoformat(), chat_id), streaks=streaks))
                     + "\n\n<b>All time</b>\n" + "\n".join(board_lines(self.store.scores(chat_id=chat_id), streaks=streaks))
+                    + self.own_board(week_start(today).isoformat(), today.isoformat(), chat_id)
                     + "\n\n<b>Last week's awards</b>\n"
                     + "\n".join(self.titles(last_week.isoformat(), (last_week + dt.timedelta(days=6)).isoformat(),
                                             chat_id))), None
@@ -909,13 +920,13 @@ class Game:
             mine = next((r for r in rows if r["user_id"] == user_id), None)
             bot = next((r for r in rows if r["user_id"] == BOT_ID), None)
             if not mine or not mine["played"]:
-                return f"{esc(name)}: no scores yet. Play today's game!", None
+                return f"{esc(name)}: no scores yet. Play today's game!" + self.own_line(user_id), None
             streak = self.store.streaks().get(user_id, 0)
             won, tried = self.store.mover_record(user_id)
             vs = f"\n{esc(self.bot)}: {pts(bot['points'])}, right {bot['correct']} of {bot['played']}" if bot else ""
             return (f"{esc(name)}: {pts(mine['points'])} · right {mine['correct']} of {mine['played']} "
                     f"({mine['correct'] / mine['played']:.0%}) · 🔥 {streak} right in a row"
-                    + (f" · 🚀 {won} of {tried} biggest movers" if tried else "") + vs), None
+                    + (f" · 🚀 {won} of {tried} biggest movers" if tried else "") + vs + self.own_line(user_id)), None
         if cmd == "/bot":
             return self.bot_text(), None
         if cmd == "/report":
@@ -1217,3 +1228,150 @@ class Game:
                   for i, r in enumerate(rows[:10])]
         lines.append("The next game is tomorrow evening. Good luck!")
         return "\n".join(lines)
+
+    # ---------------------------------------------------------------- own picks
+    # Any US stock, any time: from the current price if the market is open (and not about to close), otherwise from
+    # the next open; judged at that session's close with the same points as the daily game, on a separate score.
+
+    def own_start(self, ny: dt.datetime) -> tuple[str, dt.date]:
+        """('now', today) during the session (until 30 minutes before the close), else ('open', next session)."""
+        d = ny.date()
+        if market.is_trading_day(d):
+            if lock_at(d) <= ny < close_at(d) - OWN_CUTOFF:
+                return "now", d
+            if ny < lock_at(d):
+                return "open", d
+        return "open", market.next_trading_day(d)
+
+    def own_command(self, arg: str, now: dt.datetime):
+        ticker = arg.upper().lstrip("$")
+        if not ticker:
+            return ("📌 Pick any US stock yourself: type /pick and the ticker, like <b>/pick NVDA</b> or "
+                    f"<b>/pick TSLA</b>. Up to {OWN_PER_DAY} a day, with their own score."), None
+        if not TICKER.match(ticker):
+            return f"'{esc(arg)}' doesn't look like a US stock ticker. Try something like /pick AAPL.", None
+        try:
+            info = self.quotes([ticker]).get(ticker)
+        except Exception:
+            info = None
+        if not info or not info.get("last"):
+            return f"I can't find {esc(ticker)}. Check the ticker (like AAPL or NVDA) and try again.", None
+        ny = now.astimezone(NY)
+        kind, day = self.own_start(ny)
+        today = info["update_time"] and info["update_time"].date() == ny.date() and info.get("prev_close")
+        move = f" ({info['last'] / info['prev_close'] - 1:+.1%} today)" if today else ""
+        when = ("<b>now</b>, from the current price" if kind == "now" else
+                f"at the next market open: <b>{day:%a %d %b}, {_sg(lock_at(day))} Singapore time</b>")
+        lines = [f"📌 <b>Own pick: {esc(ticker)}</b> {esc(info['name'])} · ${info['last']:.2f}{move}",
+                 f"Starts {when}. Ends when the market closes that day ({_sg(close_at(day))} Singapore time).",
+                 "Will it end <b>higher or lower</b> than where it starts?",
+                 "⏫ / ⏬ very sure: +5 / −11 · ⬆️ / ⬇️ think so: +3 / −4",
+                 f"Anyone can tap to make their own pick on {esc(ticker)} ({OWN_PER_DAY} own picks a day each)."]
+        buttons = [[(f"⏫ {ticker}", f"o|{ticker}|U|s"), ("⬆️", f"o|{ticker}|U|l"), ("⬇️", f"o|{ticker}|D|l"),
+                    (f"⏬ {ticker}", f"o|{ticker}|D|s")]]
+        return "\n".join(lines), buttons
+
+    def on_own(self, data: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None) -> str:
+        try:
+            _, ticker, c, cf = data.split("|")
+            call, conf = {"U": "UP", "D": "DOWN"}[c], {"s": "sure", "l": "lean"}[cf]
+        except (ValueError, KeyError):
+            return "Unknown button."
+        if chat_id is None:
+            return "Own picks are made in your game group."
+        ny = now.astimezone(NY)
+        mine = self.store.own("o.user_id=? AND o.ticker=? AND o.result IS NULL", (user_id, ticker))
+        if mine:
+            p = mine[-1]
+            if p["start_price"] is None and p["call"] == call and p["conf"] == conf:
+                self.store.delete_own(p["id"])
+                return f"📌 {ticker}: own pick cancelled."
+            return f"📌 You already have a {ticker} pick running. Wait for its result before picking it again."
+        made_today = self.store.own("o.user_id=? AND o.made_day=?", (user_id, ny.date().isoformat()))
+        if len(made_today) >= OWN_PER_DAY:
+            return f"📌 That's your {OWN_PER_DAY} own picks for today. Try again tomorrow!"
+        kind, day = self.own_start(ny)
+        start, label = None, ""
+        if kind == "now":
+            try:
+                info = self.quotes([ticker]).get(ticker) or {}
+            except Exception:
+                info = {}
+            if not info.get("last") or not info.get("update_time") or info["update_time"].date() != day:
+                return "📌 Can't get the price right now. Try again in a minute."
+            start, label = info["last"], f"from ${info['last']:.2f} now until today's close"
+        else:
+            label = f"from the open on {day:%a %d %b} ({_sg(lock_at(day))} Singapore) until that day's close"
+        self.store.player(user_id, name)
+        self.store.add_own(chat_id=chat_id, user_id=user_id, ticker=ticker, call=call, conf=conf,
+                           made_at=now.isoformat(), made_day=ny.date().isoformat(), day=day.isoformat(),
+                           start_price=start, start_kind=kind)
+        win, lose = CONF[conf]
+        return (f"📌 {ticker} {icon(call, conf)}: {CONF_LABEL[conf].lower()} it goes {'up' if call == 'UP' else 'down'}, "
+                f"{label}. +{win} if right, {lose} if wrong.")
+
+    def own_stage(self, ny: dt.datetime) -> None:
+        pending = self.store.own("o.result IS NULL")
+        need_open = [p for p in pending if p["start_price"] is None and ny >= at(dt.date.fromisoformat(p["day"]), OPEN_CAPTURE)]
+        need_close = [p for p in pending if ny >= close_at(dt.date.fromisoformat(p["day"])) + SETTLE_DELAY]
+        tickers = sorted({p["ticker"] for p in need_open + need_close})
+        if tickers and self._due("own", "all", ny, dt.timedelta(minutes=5)):
+            try:
+                q = self.quotes(tickers)
+            except Exception as e:
+                self.log(f"own-pick quotes failed: {e!r}"[:300])
+                q = None
+            if q is not None:
+                for p in need_open:
+                    o, _ = market.session_prices(dt.date.fromisoformat(p["day"]), q.get(p["ticker"]))
+                    if o:
+                        p["start_price"] = o
+                        self.store.update_own(p["id"], start_price=o)
+                for p in need_close:
+                    day = dt.date.fromisoformat(p["day"])
+                    info = q.get(p["ticker"])
+                    o, c = market.session_prices(day, info)
+                    start = p["start_price"] or o
+                    if start and c:
+                        result = "UP" if c > start else "DOWN" if c < start else "FLAT"
+                        self.store.update_own(p["id"], start_price=start, close=c, result=result)
+                    elif c or ny >= close_at(day) + GIVE_UP or (
+                            info and info.get("update_time") and info["update_time"].date() > market.next_trading_day(day)):
+                        self.store.update_own(p["id"], result=VOID)
+        done = self.store.own("o.result IS NOT NULL AND o.posted=0")
+        for chat in sorted({p["chat_id"] for p in done}):
+            mine = [p for p in done if p["chat_id"] == chat]
+            for p in mine:
+                self.store.update_own(p["id"], posted=1)
+            if chat in self.chat_ids():
+                self.send(chat, self.own_results_text(mine))
+
+    def own_results_text(self, picks: list[dict]) -> str:
+        lines = ["📌 <b>Own picks results</b>"]
+        for p in picks:
+            head = f"{esc(p['player'])}: {esc(p['ticker'])} {icon(p['call'], p['conf'])}"
+            if p["result"] in ("UP", "DOWN"):
+                ok = p["call"] == p["result"]
+                lines.append(f"{'✅' if ok else '❌'} {head} {p['start_price']:.2f} → {p['close']:.2f} "
+                             f"({p['close'] / p['start_price'] - 1:+.1%}) · {pts(points(p['call'], p['result'], 0, p['conf']))}")
+            else:
+                lines.append(f"➖ {head}: no result ({'price didn\'t change' if p['result'] == 'FLAT' else 'price not available'})")
+        return "\n".join(lines)
+
+    def own_line(self, user_id: int) -> str:
+        r = next((r for r in self.store.own_scores() if r["user_id"] == user_id), None)
+        running = len(self.store.own("o.user_id=? AND o.result IS NULL", (user_id,)))
+        if not r and not running:
+            return ""
+        out = "\n📌 Own picks: "
+        if r:
+            out += f"{pts(r['points'])}, right {r['correct']} of {r['played']}"
+        if running:
+            out += (" · " if r else "") + f"{running} waiting for a result"
+        return out
+
+    def own_board(self, since: str, until: str, chat_id: int | None) -> str:
+        rows = self.store.own_scores(since, until, chat_id)
+        if not rows:
+            return ""
+        return "\n\n<b>📌 Own picks this week</b>\n" + "\n".join(board_lines(rows))

@@ -952,3 +952,73 @@ def test_open_round_switches_to_new_rules_on_start():
     assert (v["conf"], v["double"]) == ("lean", 0)
     assert tg.edits and "Very sure" in tg.edits[-1][1]
     assert "Unknown" in game.on_button(f"d|20261123|{t}", 7, "Ann", ny(DAY, 9))   # double down is gone
+
+
+# ---------------------------------------------------------------- own picks
+
+def test_own_pick_during_the_session():
+    game, store, tg, q, calls, clock = make()
+    q.set("NVDA", open_=100.0, last=102.0, prev_close=101.0, when=ny(DAY, 11))
+    text, buttons = game.on_command("/pick nvda", 7, "Ann", ny(DAY, 11))
+    assert "Own pick: NVDA" in text and "Starts <b>now</b>" in text and "+1.0% today" in text
+    assert [cb for _, cb in buttons[0]] == ["o|NVDA|U|s", "o|NVDA|U|l", "o|NVDA|D|l", "o|NVDA|D|s"]
+    toast = game.on_button("o|NVDA|U|s", 7, "Ann", ny(DAY, 11, 1))
+    assert "from $102.00 now until today's close" in toast and "+5 if right, -11 if wrong" in toast
+    assert "already have a NVDA pick" in game.on_button("o|NVDA|D|l", 7, "Ann", ny(DAY, 11, 2))
+    assert "Lean" not in game.on_button("o|NVDA|D|l", 8, "Ben", ny(DAY, 11, 2))   # others can join
+    q.set("NVDA", open_=100.0, last=104.0, prev_close=101.0, when=ny(DAY, 16))
+    game.tick(ny(DAY, 16, 9))
+    assert not any(t.startswith("📌 <b>Own picks results") for t, _ in tg.sent)
+    game.tick(ny(DAY, 16, 10))
+    res = tg.sent[-1][0]
+    assert res.startswith("📌 <b>Own picks results") and "✅ Ann: NVDA ⏫ 102.00 → 104.00 (+2.0%) · 5 pts" in res
+    assert "❌ Ben: NVDA ⬇️" in res and "-4 pts" in res
+    game.tick(ny(DAY, 16, 30))
+    assert sum(t.startswith("📌 <b>Own picks results") for t, _ in tg.sent) == 1
+    assert "📌 Own picks: 5 pts, right 1 of 1" in game.on_command("/me", 7, "Ann", ny(DAY, 17))[0]
+    assert "Own picks this week" in game.on_command("/board", 7, "Ann", ny(DAY, 17))[0]
+    assert store.scores() == []                                                # separate from the daily game
+
+
+def test_own_pick_before_the_open_waits_for_it_and_can_be_cancelled():
+    game, store, tg, q, calls, clock = make()
+    q.set("KO", last=60.0, prev_close=60.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    text, _ = game.on_command("/pick $KO", 7, "Ann", ny(DAY, 8))
+    assert "next market open: <b>Mon 23 Nov, 22:30 Singapore time</b>" in text
+    assert "from the open on Mon 23 Nov" in game.on_button("o|KO|D|l", 7, "Ann", ny(DAY, 8))
+    assert "cancelled" in game.on_button("o|KO|D|l", 7, "Ann", ny(DAY, 8, 1))
+    game.on_button("o|KO|D|l", 7, "Ann", ny(DAY, 8, 2))
+    q.set("KO", open_=61.0, last=60.5, prev_close=60.0, when=ny(DAY, 9, 40))
+    game.tick(ny(DAY, 9, 40))
+    assert store.own()[0]["start_price"] == 61.0
+    assert "already have" in game.on_button("o|KO|D|l", 7, "Ann", ny(DAY, 9, 41))   # started: can't cancel
+    q.set("KO", open_=61.0, last=59.0, prev_close=60.0, when=ny(DAY, 16))
+    game.tick(ny(DAY, 16, 10))
+    assert "✅ Ann: KO ⬇️ 61.00 → 59.00" in tg.sent[-1][0]
+
+
+def test_own_pick_timing_and_limits():
+    game, store, tg, q, calls, clock = make()
+    assert game.own_start(ny(DAY, 15, 31)) == ("open", dt.date(2026, 11, 24))   # last 30 minutes: next session
+    assert game.own_start(ny(DAY, 15, 29)) == ("now", DAY)
+    assert game.own_start(ny(dt.date(2026, 11, 25), 17)) == ("open", dt.date(2026, 11, 27))  # Thanksgiving skipped
+    assert game.own_start(ny(dt.date(2026, 11, 28), 12)) == ("open", dt.date(2026, 11, 30))  # weekend
+    for t in ("AAPL", "MSFT", "TSLA", "AMD"):
+        q.set(t, last=10.0, prev_close=10.0, when=ny(DAY, 12))
+    for t in ("AAPL", "MSFT", "TSLA"):
+        game.on_button(f"o|{t}|U|l", 7, "Ann", ny(DAY, 12))
+    assert "3 own picks for today" in game.on_button("o|AMD|U|l", 7, "Ann", ny(DAY, 12))
+    assert "Unknown" in game.on_button("o|AMD|X|l", 8, "Ben", ny(DAY, 12))
+    assert "can't find ZZZZ" in game.on_command("/pick ZZZZ", 7, "Ann", ny(DAY, 12))[0]
+    assert "doesn't look like" in game.on_command("/pick hello123", 7, "Ann", ny(DAY, 12))[0]
+    assert "/pick NVDA" in game.on_command("/pick", 7, "Ann", ny(DAY, 12))[0]
+
+
+def test_own_pick_without_a_captured_open_is_void():
+    game, store, tg, q, calls, clock = make()
+    q.set("KO", last=60.0, prev_close=60.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    game.on_button("o|KO|U|l", 7, "Ann", ny(DAY, 8))
+    nxt = DAY + dt.timedelta(days=1)
+    q.set("KO", open_=62.0, last=63.0, prev_close=61.0, when=ny(nxt, 10))      # bot was down all of the 23rd
+    game.tick(ny(nxt, 10))
+    assert store.own()[0]["result"] == "VOID" and "no result" in tg.sent[-1][0]

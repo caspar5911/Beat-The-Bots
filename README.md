@@ -41,6 +41,10 @@ Tap a pick again to undo it. 🚀 Naming the stock with the biggest open-to-clos
 - `/league`, `/league join`, `/league leave`: groups vs groups by average points per player (opt-in: joining shows
   the group's name to the other groups)
 - `/practice`: a 2-minute unscored round on the last completed session, playable at any hour
+- `/pick NVDA`: an **own pick** on any US stock, any time. During the session it starts from the current price
+  (until 30 minutes before the close); otherwise from the next open. It's judged at that session's close with the
+  same points, on a separate "own picks" score. Up to 3 a day per player; anyone can tap the buttons to pick the same
+  stock themselves.
 
 **Any group can play**: add the bot to a group and it joins (up to `BTB_MAX_GROUPS`, default 20). All groups get
 the same daily stocks and AI calls; each has its own post, reminders and leaderboard, and a player's picks count

@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS quiz (poll_id TEXT PRIMARY KEY, chat_id INTEGER NOT N
     idx INTEGER NOT NULL, correct INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS quiz_answers (poll_id TEXT NOT NULL, user_id INTEGER NOT NULL, choice INTEGER NOT NULL,
     PRIMARY KEY (poll_id, user_id));
+CREATE TABLE IF NOT EXISTS own_picks (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL, ticker TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', call TEXT NOT NULL,
+    conf TEXT NOT NULL, made_at TEXT NOT NULL, made_day TEXT NOT NULL, day TEXT NOT NULL, start_price REAL,
+    start_kind TEXT NOT NULL, close REAL, result TEXT, posted INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 # Columns added after the first release, for databases created before them.
@@ -294,6 +298,38 @@ class Store:
                             "JOIN rounds r ON r.day=b.day WHERE b.user_id=? AND r.mover IS NOT NULL AND r.mover != 'VOID'",
                             (user_id,)).fetchone()
         return (r["won"] or 0, r["played"] or 0)
+
+    # ---------------------------------------------------------------- own picks
+    def add_own(self, **f) -> int:
+        cols = ", ".join(f)
+        cur = self.db.execute(f"INSERT INTO own_picks ({cols}) VALUES ({', '.join('?' * len(f))})", tuple(f.values()))
+        self.db.commit()
+        return cur.lastrowid
+
+    def own(self, where: str = "1=1", args: tuple = ()) -> list[dict]:
+        return [dict(r) for r in self.db.execute(
+            f"SELECT o.*, p.name AS player FROM own_picks o JOIN players p USING (user_id) WHERE {where} ORDER BY o.id",
+            args)]
+
+    def update_own(self, pick_id: int, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE own_picks SET {cols} WHERE id=?", (*fields.values(), pick_id))
+        self.db.commit()
+
+    def delete_own(self, pick_id: int) -> None:
+        self.db.execute("DELETE FROM own_picks WHERE id=?", (pick_id,))
+        self.db.commit()
+
+    def own_scores(self, since: str = "", until: str = "9999", chat_id: int | None = None) -> list[dict]:
+        where, args = "o.result IN ('UP','DOWN') AND o.day BETWEEN ? AND ?", [since, until]
+        if chat_id is not None:
+            where += " AND o.chat_id = ?"
+            args.append(chat_id)
+        return [dict(r) for r in self.db.execute(
+            "SELECT o.user_id, p.name, SUM(CASE WHEN o.conf='sure' THEN (CASE WHEN o.call=o.result THEN 5 ELSE -11 END) "
+            "ELSE (CASE WHEN o.call=o.result THEN 3 ELSE -4 END) END) AS points, SUM(o.call=o.result) AS correct, "
+            f"COUNT(*) AS played FROM own_picks o JOIN players p USING (user_id) WHERE {where} "
+            "GROUP BY o.user_id ORDER BY points DESC, correct DESC, p.name", args)]
 
     def league(self, since: str, until: str, min_players: int = 2) -> list[dict]:
         """Opted-in groups ranked by average points per active player over [since, until]."""
