@@ -151,7 +151,7 @@ def test_whole_day():
     game.tick(ny(DAY, 9, 30))
     assert store.round(DAY.isoformat())["status"] == "locked"
     lock = tg.sent[-1][0]
-    assert "goes up, humans" in lock and "👥 Ann ⬇️ · Ben ⬆️" in lock and "🤖 Ah Huat ⬆️ (50% sure)" in lock
+    assert "goes up, humans" in lock and "👤 Ann ⬇️\n👤 Ben ⬆️\n🤖 Ah Huat ⬆️ (50% sure)" in lock and "🤖 Ah Huat ⬆️ (50% sure)" in lock
     assert f"⚔️ Ah Huat is going <b>against the group</b>" not in lock          # 1-1 split: no group call
     assert "Too late" in game.on_button(buttons[1][0][1], 8, "Ben", ny(DAY, 9, 30, 1))
     for t in ts:
@@ -864,7 +864,7 @@ def test_crowd_split_contrarian_and_group_brain():
     for row in b:
         game.on_button(row[1][1], 4, "Rebel", ny(DAY, 9))                     # one says DOWN everywhere
     game.tick(ny(DAY, 9, 30))
-    assert tg.sent[-1][0].count("👥 U1 ⬆️ · U2 ⬆️ · U3 ⬆️ · Rebel ⬇️") == 3
+    assert tg.sent[-1][0].count("👤 U1 ⬆️\n👤 U2 ⬆️\n👤 U3 ⬆️\n👤 Rebel ⬇️") == 3
     assert "against the group" not in tg.sent[-1][0] and "agrees with the group" in tg.sent[-1][0]
     settle_day(game, q, ts, DAY, [99.0, 101.0, 101.0])                        # #1 went DOWN
     res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
@@ -1146,7 +1146,7 @@ def test_add_a_stock_to_todays_game():
     game.tick(ny(DAY, 9, 20))
     assert "Cat" not in tg.sent[-1][0]
     game.tick(ny(DAY, 9, 30))
-    assert "👥 Ben ⬆️" in tg.sent[-1][0]
+    assert "👤 Ben ⬆️" in tg.sent[-1][0]
     assert "picks are closed" in game.on_command("/add AAPL", 7, "Ann", ny(DAY, 9, 31))[0]
     for t in ts + ["NVDA", "TSLA", "KO"]:
         q.set(t, open_=100.0, last=100.0, when=ny(DAY, 9, 36))
@@ -1392,10 +1392,10 @@ def test_picks_closed_message_shows_who_and_the_ai_against_the_group():
     b = lean_rows(game.buttons(DAY, store.stocks(DAY.isoformat())))
     for u, name in ((7, "Ann"), (8, "Ben")):
         game.on_button(b[0][0][1], u, name, ny(DAY, 9))
-    for u in range(20, 28):
+    for u in range(20, 29):
         game.on_button(b[1][1][1], u, f"P{u}", ny(DAY, 9))
     game.tick(ny(DAY, 9, 30))
     lock = tg.sent[-1][0]
-    assert "👥 Ann ⬆️ · Ben ⬆️" in lock and "👥 ⬆️ 0 · ⬇️ 8" in lock               # names, or counts when many
+    assert "👤 Ann ⬆️\n👤 Ben ⬆️\n🤖" in lock and "👥 ⬆️ 0 · ⬇️ 9" in lock               # names, or counts when many
     assert "“A 16% jump after a crash is a lot to hold all day. Humans love tops. Extra words.”" in lock   # in full
     assert "⚔️ Ah Huat is going <b>against the group</b> on" in lock and "Results at 05:10" in lock

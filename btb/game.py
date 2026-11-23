@@ -879,8 +879,8 @@ class Game:
             mine = [v for v in votes if v["ticker"] == s["ticker"]]
             if not mine:
                 lines.append("👥 nobody picked")
-            elif len(mine) <= 6:
-                lines.append("👥 " + " · ".join(f"{esc(v['name'])} {icon(v['call'], v.get('conf'))}" for v in mine))
+            elif len(mine) <= 8:
+                lines += [f"👤 {esc(v['name'])} {icon(v['call'], v.get('conf'))}" for v in mine]
             else:
                 up = sum(v["call"] == "UP" for v in mine)
                 lines.append(f"👥 ⬆️ {up} · ⬇️ {len(mine) - up}")
