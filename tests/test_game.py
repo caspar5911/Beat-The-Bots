@@ -131,19 +131,19 @@ def test_whole_day():
     assert [len(r) for r in buttons[:-2]] == [4, 4, 4]
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
-    assert "Huat or Not?" in text and "not investment advice" in text and "Sure" in text and "skip" in text
+    assert "Huat or Not?" in text and "Not money advice" in text and "Very sure" in text and "Don't tap" in text
     assert "goes up" not in text                     # the AI's calls stay hidden until the lock
     assert calls == ts
     up, down = buttons[0][0][1], buttons[0][1][1]
     assert "+3 if right, -4 if wrong" in game.on_button(up, 7, "Ann", ny(DAY, 9, 0))
-    assert "Lean down" in game.on_button(down, 7, "Ann", ny(DAY, 9, 10))    # changed mind: last one counts
+    assert "think so it goes down" in game.on_button(down, 7, "Ann", ny(DAY, 9, 10))    # changed mind: last one counts
     for row in buttons[1:]:
         game.on_button(row[0][1], 7, "Ann", ny(DAY, 9, 0))
     game.on_button(buttons[0][0][1], 8, "Ben", ny(DAY, 9, 29, 59))
     game.tick(ny(DAY, 9, 30))
     assert store.round(DAY.isoformat())["status"] == "locked"
     lock = tg.sent[-1][0]
-    assert "goes up, humans" in lock and "group ⬆️ 1 · ⬇️ 1" in lock and "Lean (50%)" in lock
+    assert "goes up, humans" in lock and "group ⬆️ 1 · ⬇️ 1" in lock and "think so (50% sure)" in lock
     assert "Too late" in game.on_button(buttons[1][0][1], 8, "Ben", ny(DAY, 9, 30, 1))
     for t in ts:
         q.set(t, open_=100.0, last=100.5, when=ny(DAY, 9, 36))
@@ -157,9 +157,9 @@ def test_whole_day():
     game.tick(ny(DAY, 16, 10))
     assert store.round(DAY.isoformat())["status"] == "settled"
     res, res_buttons = tg.sent[-1]
-    assert "Results" in res and "Beat Ah Huat today: Ann" in res and "📚 <b>Lesson:</b>" in res
+    assert "Results" in res and "Beat Ah Huat today: Ann" in res and "📚 <b>Tip:</b>" in res
     assert [cb for _, cb in res_buttons[0]] == [f"w|20261123|{t}" for t in ts]
-    assert "Group brain 2/3 vs Ah Huat 2/3: draw" in res        # group: Ann DOWN/Ben UP tie on #1 -> no call
+    assert "The group together got 2 of 3 right, Ah Huat got 2 of 3: a draw" in res        # group: Ann DOWN/Ben UP tie on #1 -> no call
     scores = {r["name"]: (r["points"], r["correct"], r["played"]) for r in store.scores()}
     assert scores["Ann"] == (9, 3, 3)                # three right Leans
     assert scores["Ben"] == (-4, 0, 1)
@@ -181,7 +181,7 @@ def test_model_down_round_still_runs():
     full_day(game, store, tg, q, clock)
     assert calls == [] and all(s["ai_call"] is None for s in store.stocks(DAY.isoformat()))
     game.tick(ny(DAY, 9, 30))
-    assert "sat out" in tg.sent[-1][0]
+    assert "didn't play" in tg.sent[-1][0]
     assert not [v for v in store.votes(DAY.isoformat()) if v["user_id"] == BOT_ID]
 
 
@@ -217,7 +217,7 @@ def test_open_never_captured_is_void():
         q.set(t, open_=120.0, last=121.0, prev_close=104.0, when=ny(nxt, 10))
     game.tick(ny(nxt, 10))
     assert {s["result"] for s in store.stocks(DAY.isoformat())} == {"VOID"}
-    assert "not scored" in tg.sent[-1][0]
+    assert "no points" in tg.sent[-1][0]
 
 
 def test_quotes_down_then_give_up():
@@ -245,12 +245,12 @@ def test_flat_is_not_scored():
 
 def test_commands_and_group_handling():
     game, store, tg, q, calls, clock = make()
-    assert "No round yet" in game.on_command("/today", 1, "Ann", ny(DAY, 8))[0]
+    assert "No game yet" in game.on_command("/today", 1, "Ann", ny(DAY, 8))[0]
     full_day(game, store, tg, q, clock)
     text, buttons = game.on_command("/today@BeatTheBotBot", 1, "Ann", ny(DAY, 9))
     assert "Huat or Not?" in text and buttons
     assert "This week" in game.on_command("/board@BeatTheBotBot extra", 1, "Ann", ny(DAY, 9))[0]
-    assert "no settled picks" in game.on_command("/me", 1, "Ann", ny(DAY, 9))[0]
+    assert "no scores" in game.on_command("/me", 1, "Ann", ny(DAY, 9))[0]
     assert game.on_command("/unknown", 1, "Ann", ny(DAY, 9)) is None
     # buttons from groups the game doesn't play in are refused; votes answer with a toast
     cb = buttons[0][0][1]
@@ -259,10 +259,10 @@ def test_commands_and_group_handling():
     assert tg.answers[-1].startswith("This game") and not store.votes(DAY.isoformat())
     handle(game, tg, {"callback_query": {"id": "x", "data": cb, "from": {"id": 5, "first_name": "Eve"},
                                          "message": {"chat": {"id": CHAT, "type": "group"}}}}, ny(DAY, 9))
-    assert "Sure up" in tg.answers[-1] and store.votes(DAY.isoformat())[0]["name"] == "Eve"
+    assert "very sure it goes up" in tg.answers[-1] and store.votes(DAY.isoformat())[0]["name"] == "Eve"
     assert 5 in store.members(CHAT)
     assert "Unknown" in game.on_vote("garbage", 5, "Eve", ny(DAY, 9))
-    assert "no longer" in game.on_vote("v|20261123|ZZZZ|U", 5, "Eve", ny(DAY, 9))
+    assert "is over" in game.on_vote("v|20261123|ZZZZ|U", 5, "Eve", ny(DAY, 9))
 
 
 def test_news_relevance():
@@ -399,7 +399,7 @@ def test_confidence_rules_and_scoring():
     b = game.buttons(DAY, store.stocks(DAY.isoformat()))
     sure_up, lean_up, lean_down, sure_down = (x[1] for x in b[0])
     assert "+5 if right, -11 if wrong" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9))
-    assert "removed" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 1))     # tap again: skip
+    assert "cancelled" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 1))     # tap again: skip
     assert not store.votes(DAY.isoformat())
     game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 2))
     game.on_button(b[1][3][1], 7, "Ann", ny(DAY, 9, 2))                     # #2 sure down
@@ -407,7 +407,7 @@ def test_confidence_rules_and_scoring():
     assert "Unknown" in game.on_button(f"v|20261123|{ts[0]}|U|x", 7, "Ann", ny(DAY, 9))
     reason = b[-1][0][1]
     assert "📰 News" in game.on_button(reason, 7, "Ann", ny(DAY, 9, 3)) and store.reason(DAY.isoformat(), 7) == "news"
-    assert "locked" in game.on_button(reason, 7, "Ann", ny(DAY, 9, 30))
+    assert "closed" in game.on_button(reason, 7, "Ann", ny(DAY, 9, 30))
     settle_day(game, q, ts, DAY, [101.0, 101.0, 99.0])     # #1 up (sure right), #2 up (sure wrong), #3 down (lean right)
     ann = next(r for r in store.scores() if r["user_id"] == 7)
     assert (ann["points"], ann["correct"], ann["played"]) == (5 - 11 + 3, 2, 3)
@@ -420,7 +420,7 @@ def test_ai_confidence_is_shown_and_scored():
     full_day(game, store, tg, q, clock)
     game.tick(ny(DAY, 9, 30))
     lock = tg.sent[-1][0]
-    assert f"<b>{ts[1]}</b> group ⬆️ 0 · ⬇️ 0 · AI ⏫ Sure (80%)" in lock and lock.count("Lean (50%)") == 2
+    assert f"<b>{ts[1]}</b> group ⬆️ 0 · ⬇️ 0 · Ah Huat ⏫ very sure (80% sure)" in lock and lock.count("think so (50% sure)") == 2
     confs = {v["ticker"]: v["conf"] for v in store.votes(DAY.isoformat()) if v["user_id"] == BOT_ID}
     assert confs == {ts[0]: "lean", ts[1]: "sure", ts[2]: "lean"}
 
@@ -468,8 +468,8 @@ def test_halftime_live_standings():
     assert not any(t.startswith("⏱") for t, _ in tg.sent)
     game.tick(ny(DAY, 11, 0))
     text = tg.sent[-1][0]
-    assert "Halftime" in text and "-3.0% since the open" in text and "is losing" in text
-    assert "Ann: 9 pts" in text and "Ah Huat: -12 pts" in text and "Group brain 3 vs Ah Huat 0 so far" in text
+    assert "Halfway update" in text and "-3.0% since the market opened" in text and "is losing" in text
+    assert "Ann: 9 pts" in text and "Ah Huat: -12 pts" in text and "So far the group together has 3 right, Ah Huat has 0" in text
     assert tg.silent[-1] is False                                             # halftime pings even at midnight SGT
     game.tick(ny(DAY, 11, 30))
     assert sum(t.startswith("⏱") for t, _ in tg.sent) == 1
@@ -493,7 +493,7 @@ def test_streaks_and_banter():
     res = tg.sent[-1][0]
     assert "💬" in res and "Ann got lucky." in res and said[0]["you"] == BOT_ID
     assert store.streaks()[7] == 3 and "🔥3" in res
-    assert "🔥 3 in a row" in game.on_command("/me", 7, "Ann", ny(DAY, 17))[0]
+    assert "🔥 3 right in a row" in game.on_command("/me", 7, "Ann", ny(DAY, 17))[0]
 
 
 def test_banter_falls_back_when_model_fails():
@@ -522,9 +522,9 @@ def test_weekly_titles_on_last_trading_day():
         game.on_button(row[1][1], 8, "Ben", ny(fri, 9))                       # Ben: all DOWN
     settle_day(game, q, ts, fri, [99.0, 102.0, 103.0])                        # the AI said UP on #1 and lost
     res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
-    assert "Titles of the week" in res and "👑 Bot Slayer: <b>Ann</b>" in res and "Snack: <b>Ben</b>" in res
+    assert "This week's awards" in res and "👑 Best player, and beat Ah Huat: <b>Ann</b>" in res and "Last place: <b>Ben</b>" in res
     board = game.on_command("/board", 7, "Ann", ny(DAY, 8))[0]                # next week: last week's titles
-    assert "Last week's titles" in board and "Bot Slayer" in board
+    assert "Last week's awards" in board and "Best player" in board
 
 
 def test_old_database_is_migrated(tmp_path):
@@ -576,8 +576,8 @@ def test_practice_round():
     for t in g.POOL:
         q.set(t, open_=100.0, last=101.0 if t < "M" else 99.0, when=ny(DAY, 16))
     text, buttons = game.on_command("/practice@HuatOrNotBot", 7, "Ann", now)
-    assert "Practice round" in text and "Mon 23 Nov" in text and len(buttons) == 3
-    assert "already running" in game.on_command("/practice", 7, "Ann", now)[0]
+    assert "Practice game" in text and "Mon 23 Nov" in text and len(buttons) == 3
+    assert "already on" in game.on_command("/practice", 7, "Ann", now)[0]
     picks = []
     for row in buttons:
         assert len(row[0][1].encode()) <= 64
@@ -593,14 +593,14 @@ def test_practice_round():
     game.tick(now + dt.timedelta(seconds=200))
     assert sum("Practice answers" in t for t, _ in tg.sent) == 1
     assert store.scores() == [] and store.db.execute("SELECT COUNT(*) FROM rounds").fetchone()[0] == 0
-    assert "Practice round" in game.on_command("/practice", 7, "Ann", now + dt.timedelta(minutes=10))[0]
+    assert "Practice game" in game.on_command("/practice", 7, "Ann", now + dt.timedelta(minutes=10))[0]
     assert "over" in game.on_button(buttons[0][0][1], 7, "Ann", now + dt.timedelta(minutes=10))
 
 
 def test_practice_when_quotes_down():
     game, store, tg, q, calls, clock = make()
     q.fail = True
-    assert "Moomoo" in game.on_command("/practice", 7, "Ann", ny(DAY, 20))[0]
+    assert "Can't get prices" in game.on_command("/practice", 7, "Ann", ny(DAY, 20))[0]
 
 
 # ---------------------------------------------------------------- round 3: groups, movers, bonus, cards
@@ -632,14 +632,14 @@ def test_biggest_mover_bonus():
     full_day(game, store, tg, q, clock)
     b = game.buttons(DAY, store.stocks(DAY.isoformat()))
     mover_row = b[-2]
-    assert "Biggest mover" in game.on_button(mover_row[1][1], 7, "Ann", ny(DAY, 9))      # Ann: ts[1]
-    assert "Biggest mover" in game.on_button(mover_row[0][1], 8, "Ben", ny(DAY, 9))      # Ben: ts[0]
+    assert "moves the most" in game.on_button(mover_row[1][1], 7, "Ann", ny(DAY, 9))      # Ann: ts[1]
+    assert "moves the most" in game.on_button(mover_row[0][1], 8, "Ben", ny(DAY, 9))      # Ben: ts[0]
     game.tick(ny(DAY, 9, 30))
-    assert f"Ah Huat's biggest mover: <b>{ts[2]}</b>: volatile, humans" in tg.sent[-1][0]
+    assert f"Ah Huat thinks <b>{ts[2]}</b> will move the most: volatile, humans" in tg.sent[-1][0]
     settle_day(game, q, ts, DAY, [100.5, 95.0, 102.0])        # ts[1] moved most (-5%)
     assert store.round(DAY.isoformat())["mover"] == ts[1]
     res = tg.sent[-1][0]
-    assert f"Biggest mover: <b>{ts[1]}</b> (-5.0%) · +2 for Ann" in res and "AI ❌" in res
+    assert f"Moved the most: <b>{ts[1]}</b> (-5.0%) · +2 for Ann · Ah Huat ❌" in res
     scores = {r["name"]: (r["points"], r["correct"], r["played"]) for r in store.scores()}
     assert scores["Ann"] == (2, 0, 0) and scores["Ben"] == (0, 0, 0)    # bonus points, not calls
     assert store.mover_record(7) == (1, 1)
@@ -704,17 +704,17 @@ def test_group_cap_and_events():
 
 def test_bot_record_and_personal_card():
     game, store, tg, q, calls, clock = make()
-    assert "hasn't finished" in game.on_command("/bot", 7, "Ann", ny(DAY, 8))[0]
+    assert "has no results yet" in game.on_command("/bot", 7, "Ann", ny(DAY, 8))[0]
     ts = full_day(game, store, tg, q, clock)
     for row in lean_rows(game.buttons(DAY, store.stocks(DAY.isoformat()))):
         game.on_button(row[1][1], 7, "Ann", ny(DAY, 9))
     settle_day(game, q, ts, DAY, [96.0, 101.0, 99.0])         # the AI said UP on all
     text = game.on_command("/bot", 7, "Ann", ny(DAY, 17))[0]
-    assert "Hall of shame" in text and f"❌ {ts[0]} ⬆️" in text and "went -4.0%" in text and "Best call" in text
-    assert "Humans ahead of it all-time: 1 of 1" in text
+    assert "Worst picks" in text and f"❌ {ts[0]} ⬆️" in text and "went -4.0%" in text and "Best pick" in text
+    assert "Players doing better than it: 1 of 1" in text
     card = game.on_command("/card", 7, "Ann", ny(DAY, 17))
     assert card["photo"][:4] == b"\x89PNG" and card["caption"].startswith("Ann beat Ah Huat")
-    assert "no settled picks" in game.on_command("/card", 9, "Zed", ny(DAY, 17))[0]
+    assert "no scores" in game.on_command("/card", 9, "Zed", ny(DAY, 17))[0]
 
 
 def test_week_card_and_league():
@@ -728,14 +728,14 @@ def test_week_card_and_league():
             for row in b:
                 game.on_button(row[0 if chat == -1 else 1][1], u, f"P{u}", ny(fri, 9), chat_id=chat)
     for chat in (-1, -2):
-        assert "is in the league" in game.on_command("/league join", 1, "P1", ny(fri, 9), chat_id=chat)[0]
+        assert "joined the league" in game.on_command("/league join", 1, "P1", ny(fri, 9), chat_id=chat)[0]
     settle_day(game, q, ts, fri, [101.0, 102.0, 103.0])
     res = {chat: text for text, chat in zip([t for t, _ in tg.sent], tg.to) if text.startswith("🏁")}
-    assert "League this week" in res[-1] and "1. group-1: 9.0 (2 players)" in res[-1] and "2. group-2" in res[-1]
+    assert "Groups this week" in res[-1] and "1. group-1: 9.0 (2 players)" in res[-1] and "2. group-2" in res[-1]
     assert "group-3" not in res[-1]                           # never joined: not shown
     assert {p[0] for p in tg.photos} == {-1, -2, -3} and all(p[1][:4] == b"\x89PNG" for p in tg.photos)
     text = game.on_command("/league", 5, "P5", ny(fri, 17), chat_id=-3)[0]
-    assert "not in the league" in text and "group-1" in text
+    assert "isn't in the league" in text and "group-1" in text
     assert "left the league" in game.on_command("/league leave", 1, "P1", ny(fri, 17), chat_id=-2)[0]
 
 
@@ -759,7 +759,7 @@ def test_practice_limits():
     game.on_command("/practice", 1, "A", now, chat_id=-1)
     game.practice_reveal(now + dt.timedelta(minutes=3))
     assert "Practice again in 7 min" in game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=3), chat_id=-1)[0]
-    assert "Practice round" in game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=10), chat_id=-1)[0]
+    assert "Practice game" in game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=10), chat_id=-1)[0]
     for c in range(-2, -7, -1):                               # 6 practices with the AI within the hour...
         game.on_command("/practice", 1, "A", now + dt.timedelta(minutes=11), chat_id=c)
     n = len(calls)
@@ -833,14 +833,14 @@ def test_reasons_and_decision_reports():
     game.on_button(b[0][2][1], 8, "Ben", ny(fri, 9))                         # Ben plays 1 stock: skips 2
     settle_day(game, q, ts, fri, [101.0, 99.0, 101.0])                       # sure 1/2, lean 1/1
     report = next(t for t, _ in tg.sent if t.startswith("📊"))
-    assert "<b>Ann</b>" in report and "Sure: 1/2 (50%) · ⚠️ overconfident" in report
-    assert "Lean: 1/1 (100%) · ✅" in report and "By reason: 📰 2/3 (67%)" in report
+    assert "<b>Ann</b>" in report and "When very sure: right 1/2 (50%) · ⚠️ too confident" in report
+    assert "When 'think so': right 1/1 (100%) · ✅" in report and "Right, by reason: 📰 2/3 (67%)" in report
     assert "<b>Ben</b>" not in report                                         # under 3 picks: not reported
     mine = game.on_command("/report", 8, "Ben", ny(fri, 17))[0]
-    assert "Lean: 0/1" in mine and "Skipped 2 stocks" in mine
-    assert "no settled confidence picks" in game.on_command("/report", 9, "Zed", ny(fri, 17))[0]
+    assert "When 'think so': right 0/1" in mine and "Skipped 2 stocks" in mine
+    assert "no results yet" in game.on_command("/report", 9, "Zed", ny(fri, 17))[0]
     bot = game.on_command("/bot", 7, "Ann", ny(fri, 17))[0]
-    assert "When it said <b>Lean</b>: 2/3 (67%)" in bot and "confident voice isn't evidence" in bot
+    assert "When it said <b>think so</b>: right 2/3 (67%)" in bot and "sounding sure doesn't make someone right" in bot
 
 
 def test_crowd_split_contrarian_and_group_brain():
@@ -856,14 +856,14 @@ def test_crowd_split_contrarian_and_group_brain():
     assert tg.sent[-1][0].count("group ⬆️ 3 · ⬇️ 1") == 3
     settle_day(game, q, ts, DAY, [99.0, 101.0, 101.0])                        # #1 went DOWN
     res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
-    assert f"🦅 Against the crowd and right: Rebel on {ts[0]}" in res
-    assert "Group brain 2/3 vs Ah Huat 2/3: draw" in res
+    assert f"🦅 Right when most people were wrong: Rebel on {ts[0]}" in res
+    assert "The group together got 2 of 3 right, Ah Huat got 2 of 3: a draw" in res
     assert "Most of the group got" in res or "📚" in res
 
 
 def test_fallback_lessons():
     stocks = [{"ticker": "MU", "pre_price": 91.0, "prev_close": 100.0, "open": 90.0, "close": 95.0, "result": "UP"}]
-    assert "reversed" in g.fallback_lesson(stocks, {}) and "-9.0% before the open" in g.fallback_lesson(stocks, {})
+    assert "turned around" in g.fallback_lesson(stocks, {}) and "-9.0% before the market opened" in g.fallback_lesson(stocks, {})
     stocks = [{"ticker": "KO", "pre_price": 100.1, "prev_close": 100.0, "open": 100.0, "close": 99.0, "result": "DOWN"}]
     assert "Most of the group got KO wrong" in g.fallback_lesson(stocks, {"KO": {"UP": 4, "DOWN": 1}})
     assert g.fallback_lesson(stocks, {}) in g.LESSONS
@@ -877,7 +877,7 @@ def test_model_lesson_and_why():
     ts = full_day(game, store, tg, q, clock)
     settle_day(game, q, ts, DAY, [101.0, 99.0, 102.0])
     res, buttons = tg.sent[-1]
-    assert "📚 <b>Lesson:</b> Gaps fade as often as they run." in res
+    assert "📚 <b>Tip:</b> Gaps fade as often as they run." in res
     assert seen["why"][0]["headlines"] == [f"{ts[0]} news"] and abs(seen["why"][0]["move"] - 0.01) < 1e-9
     assert game.on_button(buttons[0][0][1], 7, "Ann", ny(DAY, 17)) == "Earnings beat lifted it."
     assert "no clear news" in game.on_button(buttons[0][1][1], 7, "Ann", ny(DAY, 17))
@@ -923,11 +923,11 @@ def test_weekend_quiz_flow():
     handle(game, tg, {"poll_answer": {"poll_id": "nope", "user": {"id": 8, "first_name": "Ben"}, "option_ids": [0]}},
            dt.datetime(2026, 11, 28, 12, tzinfo=sg))
     game.tick(dt.datetime(2026, 11, 29, 19, 59, tzinfo=sg))
-    assert not tg.sent[-1][0].startswith("🧩 <b>Weekend quiz results")
+    assert not tg.sent[-1][0].startswith("🧩 <b>Weekend quiz scores")
     game.tick(dt.datetime(2026, 11, 29, 20, 0, tzinfo=sg))
     assert "🥇 Ann: 1/2" in tg.sent[-1][0] and 7 in store.members(CHAT)
     game.tick(dt.datetime(2026, 11, 29, 20, 30, tzinfo=sg))
-    assert sum("quiz results" in t for t, _ in tg.sent) == 1
+    assert sum("quiz scores" in t for t, _ in tg.sent) == 1
 
 
 def test_why_answers_are_alerts():
@@ -950,5 +950,5 @@ def test_open_round_switches_to_new_rules_on_start():
     game.refresh_open_rounds()
     v = store.votes(key)[0]
     assert (v["conf"], v["double"]) == ("lean", 0)
-    assert tg.edits and "Sure" in tg.edits[-1][1]
+    assert tg.edits and "Very sure" in tg.edits[-1][1]
     assert "Unknown" in game.on_button(f"d|20261123|{t}", 7, "Ann", ny(DAY, 9))   # double down is gone

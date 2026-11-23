@@ -72,7 +72,7 @@ def personal_card(title: str, bot: str, name: str, since: str, until: str, me: d
         d.text((cx - d.textlength(label, font=lf) / 2, 680), label, font=lf, fill=MUTED)
     if ai:
         _center(d, 850, f"{clean(bot)}: {ai['points']} pts ({ai['correct']}/{ai['played']})", _font(36), MUTED, W)
-    _center(d, 960, "Can you beat the AI?  Daily US stock calls on Telegram", _font(30), ACCENT, W)
+    _center(d, 960, "Can you beat the AI?  A daily stock game on Telegram", _font(30), ACCENT, W)
     return _png(img)
 
 
@@ -102,5 +102,5 @@ def group_card(title: str, bot: str, since: str, until: str, rows: list[dict], l
         f = _font(36)
         d.text((W - 115 - d.textlength(score, font=f), y + 26), score, font=f, fill=MUTED)
         y += 110
-    _center(d, H - 70, "Daily US stock calls vs an AI, on Telegram", _font(28), MUTED, W)
+    _center(d, H - 70, "A daily stock game against an AI, on Telegram", _font(28), MUTED, W)
     return _png(img)

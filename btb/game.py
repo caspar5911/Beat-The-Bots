@@ -51,20 +51,20 @@ PRACTICE_COOLDOWN = dt.timedelta(minutes=10)  # per group, from the start of its
 PRACTICE_AI_PER_HOUR = 6                       # across groups: the model is shared with other work
 
 SURE_AT = 0.7                     # the AI plays "sure" only at this confidence or more
-REASONS = {"news": "📰 News", "trend": "📈 Trend", "friends": "👥 Friends", "gut": "🎲 Gut"}
-CONF_LABEL = {"sure": "Sure", "lean": "Lean"}
+REASONS = {"news": "📰 News", "trend": "📈 Trend", "friends": "👥 Friends", "gut": "🎲 Feeling"}
+CONF_LABEL = {"sure": "Very sure", "lean": "Think so"}
 ICON = {("UP", "sure"): "⏫", ("UP", "lean"): "⬆️", ("DOWN", "lean"): "⬇️", ("DOWN", "sure"): "⏬"}
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
-COMMANDS = [("today", "Today's round"), ("board", "Leaderboard"), ("me", "Your score and streak"),
-            ("report", "Your decision report: confidence, reasons"),
-            ("card", "Your weekly scorecard picture"), ("bot", "The AI's record and worst calls"),
-            ("practice", "A quick 2-minute game, anytime"), ("league", "Groups vs groups (/league join)"),
+COMMANDS = [("today", "Today's stocks"), ("board", "Scores"), ("me", "My score"),
+            ("report", "How good are my decisions?"),
+            ("card", "My score picture"), ("bot", "How good is the AI?"),
+            ("practice", "Quick 2-minute game"), ("league", "Our group vs other groups"),
             ("help", "How to play")]
 
 ARROW = {"UP": "⬆️", "DOWN": "⬇️"}
-DISCLAIMER = "<i>Just a game: not investment advice, no money involved.</i>"
+DISCLAIMER = "<i>Just a game. Not money advice. No real money.</i>"
 
 
 def esc(t) -> str:
@@ -117,7 +117,7 @@ def mention(user_id: int, name: str) -> str:
 
 def _move(s: dict) -> str:
     m = pre_move(s)
-    return f"pre-market {m:+.1%}" if m is not None else "no pre-market price"
+    return f"{m:+.1%} before the market opened" if m is not None else "no price before the market opened"
 
 
 def _sg(t: dt.datetime) -> str:
@@ -161,8 +161,8 @@ def board_lines(rows: list[dict], limit: int = 10, streaks: dict | None = None) 
     for i, r in enumerate(rows[:limit]):
         fire = f" 🔥{streaks[r['user_id']]}" if streaks and streaks.get(r["user_id"], 0) >= STREAK_SHOW else ""
         out.append(f"{medals[i] if i < 3 else f'{i + 1}.'} {esc(r['name'])}: {pts(r['points'])} "
-                   f"({r['correct']}/{r['played']}){fire}")
-    return out or ["(no settled picks yet)"]
+                   f"({r['correct']} of {r['played']} right){fire}")
+    return out or ["(no scores yet)"]
 
 
 def fallback_banter(bot: str, today: list[dict]) -> str:
@@ -170,21 +170,21 @@ def fallback_banter(bot: str, today: list[dict]) -> str:
     humans = [r for r in today if r["user_id"] != BOT_ID]
     me = next((r for r in today if r["user_id"] == BOT_ID), None)
     if not humans:
-        return "No humans showed up today. I win by forfeit 😎"
+        return "No humans played today. I win! 😎"
     best, worst = humans[0], humans[-1]
     if me and best["points"] > me["points"]:
-        return f"Fine, {best['name']} beat me today. Enjoy it, it won't last 😤"
+        return f"Fine, {best['name']} beat me today. Enjoy it, it won't happen again 😤"
     if len(humans) > 1 and worst["correct"] <= worst["played"] // 2:
-        return f"{worst['name']} went {worst['correct']}/{worst['played']}. I've seen goldfish trade better 🐟"
-    return "Another day, another win for the machine 🤖"
+        return f"{worst['name']} got {worst['correct']} of {worst['played']} right. A goldfish could do better 🐟"
+    return "Another day, another win for the robot 🤖"
 
 
 LESSONS = [
-    "A good decision can lose and a bad one can win. Judge your process: did you know something, or just guess?",
-    "Most daily moves are noise. If you can't say why you'd be right, a skip costs nothing.",
-    "Being sure feels good but costs a lot when wrong. Save Sure for when you'd bet on it ten times out of ten.",
-    "News that everyone has already seen is mostly priced in by the open.",
-    "Write down why you picked before you see the result: memory rewrites reasons after the fact.",
+    "A good choice can still lose, and a bad one can still win. Ask yourself: did I know something, or did I guess?",
+    "Most daily moves are random. If you can't say why you'd be right, skipping costs you nothing.",
+    "Saying 'very sure' feels good, but it costs a lot when you're wrong. Only use it when you'd bet on it every time.",
+    "News everyone has already seen is usually already in the price by the time the market opens.",
+    "Write down why you picked before you see the result. Later, your memory will quietly change the reason.",
 ]
 
 
@@ -195,27 +195,28 @@ def fallback_lesson(stocks: list[dict], split: dict) -> str:
         pm = pre_move(s)
         if pm is not None and abs(pm) >= 0.03:
             same = (pm > 0) == (s["result"] == "UP")
-            return (f"{s['ticker']} moved {pm:+.1%} before the open, then {'kept going' if same else 'reversed'} "
-                    f"({move_of(s):+.1%}) during the day. A big gap tells you little about what happens next.")
+            return (f"{s['ticker']} moved {pm:+.1%} before the market opened, then "
+                    f"{'kept going the same way' if same else 'turned around'} ({move_of(s):+.1%}) during the day. "
+                    "A big early move doesn't tell you much about the rest of the day.")
     for s in scored:
         c = split.get(s["ticker"])
         if c and max(c["UP"], c["DOWN"]) >= 3 and (c["UP"] > c["DOWN"]) != (s["result"] == "UP"):
-            return f"Most of the group got {s['ticker']} wrong together. Crowds feel safe, but they share the same blind spots."
+            return f"Most of the group got {s['ticker']} wrong. Following the crowd feels safe, but crowds are often wrong together."
     day = int(stocks[0]["day"].replace("-", "")) if stocks and stocks[0].get("day") else 0
     return LESSONS[day % len(LESSONS)]
 
 
 def help_text(title: str, bot: str) -> str:
-    return (f"🎯 <b>{esc(title)}</b>: a daily game about deciding under uncertainty.\n\n"
-            "Every US trading day 5 stocks are posted (20:30 Singapore in winter, 19:30 in summer). For each, call "
-            "whether it closes above or below its opening price, and how sure you are:\n"
-            "⏫ / ⏬ <b>Sure</b>: +5 right, −11 wrong (pays only if you're right 69%+ of the time)\n"
-            "⬆️ / ⬇️ <b>Lean</b>: +3 right, −4 wrong (pays if right 57%+)\n"
-            "No tap = <b>skip</b>: 0. Skipping when you have no edge is a smart move.\n"
-            "Tag what drove your picks (📰 📈 👥 🎲) and 🚀 name the biggest mover for +2.\n"
-            f"{esc(bot)} (our own AI) plays too, and its confidence is shown honestly.\n\n"
-            "Results come with the group's split, a 'Why did it move?' button and a daily lesson. Fridays: your "
-            "decision report. Weekends: a 5-question quiz.\n\n"
+    return (f"🎯 <b>{esc(title)}</b>: a daily game about making good choices when you can't be sure.\n\n"
+            "Every US trading day you get 5 stocks (at 20:30 Singapore time, 19:30 in summer). For each one, guess "
+            "if it ends the day higher or lower than when the market opens, and how sure you are:\n"
+            "⏫ / ⏬ <b>Very sure</b>: +5 if right, −11 if wrong\n"
+            "⬆️ / ⬇️ <b>Think so</b>: +3 if right, −4 if wrong\n"
+            "Not sure? Don't tap: 0 points. Skipping is smart when you don't know.\n"
+            "🚀 Guess which stock moves the most: +2. The last row asks why you picked (📰 📈 👥 🎲).\n"
+            f"{esc(bot)} (our AI) plays too, and shows how sure it is.\n\n"
+            "Results come in the morning with a tip and a ❓ button that explains each move. Fridays: a report on "
+            "your choices. Weekends: a 5-question money quiz.\n\n"
             "/today · /board · /me · /report · /card · /bot · /league · /practice\n" + DISCLAIMER)
 
 
@@ -260,17 +261,20 @@ class Game:
     # ---------------------------------------------------------------- texts
     def round_text(self, day: dt.date, stocks: list[dict], voters: int = 0) -> str:
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
-                 "Will each stock <b>close above or below its opening price</b>, and how sure are you?",
-                 "⏫/⏬ <b>Sure</b> +5 / −11 · ⬆️/⬇️ <b>Lean</b> +3 / −4 · no tap = <b>skip</b> 0 · tap again to undo",
-                 "🚀 Biggest mover (either way): +2 · Last row: what drove your picks today?",
-                 f"Picks lock at the open: 09:30 New York ({_sg(lock_at(day))} Singapore). "
-                 f"{esc(self.bot)}'s calls are revealed at the lock.", ""]
+                 "Will each stock end the day <b>higher or lower</b> than when the market opens? How sure are you?",
+                 "⏫ / ⏬ <b>Very sure</b>: +5 if right, −11 if wrong",
+                 "⬆️ / ⬇️ <b>Think so</b>: +3 if right, −4 if wrong",
+                 "Not sure? Don't tap (0 points). Tap again to cancel a pick.",
+                 "🚀 Which one will move the most, up or down? +2 if right.",
+                 "Last row: why did you pick? News, trend, friends or a feeling.",
+                 f"Picks close at {_sg(lock_at(day))} Singapore time, when the US market opens. "
+                 f"{esc(self.bot)} shows its picks then.", ""]
         for i, s in enumerate(stocks, 1):
             lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])} · {_move(s)}")
             for h in s["headlines"][:2]:
                 lines.append(f"   • {esc(h['title'][:110])}")
             if not s["headlines"]:
-                lines.append("   • (no fresh headlines)")
+                lines.append("   • (no news today)")
         lines += ["", f"Players so far: {voters}", DISCLAIMER]
         return "\n".join(lines)
 
@@ -301,26 +305,27 @@ class Game:
     def lock_text(self, day: dt.date, stocks: list[dict], voters: int, chat_id: int | None = None) -> str:
         key = day.isoformat()
         split = self.split(key, chat_id)
-        lines = [f"🔒 <b>Picks locked</b> · {day:%a %d %b} · {voters} player{'s' if voters != 1 else ''}",
-                 f"The group's split and {esc(self.bot)}'s calls:"]
+        lines = [f"🔒 <b>Picks closed</b> · {day:%a %d %b} · {voters} player{'s' if voters != 1 else ''}",
+                 f"What the group picked, and {esc(self.bot)}'s picks:"]
         for s in stocks:
             c = split.get(s["ticker"], {"UP": 0, "DOWN": 0})
             crowd = f"⬆️ {c['UP']} · ⬇️ {c['DOWN']}"
             if s["ai_call"]:
                 conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
-                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · AI {icon(s['ai_call'], conf)} "
-                             f"{CONF_LABEL[conf]} ({(s['ai_conf'] or 0.5):.0%}): {esc(s['ai_reason'] or '(no comment)')}")
+                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · {esc(self.short)} {icon(s['ai_call'], conf)} "
+                             f"{CONF_LABEL[conf].lower()} ({(s['ai_conf'] or 0.5):.0%} sure): "
+                             f"{esc(s['ai_reason'] or '(no comment)')}")
             else:
-                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · AI 💤 sat out (model unavailable)")
+                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · {esc(self.short)} 💤 didn't play (AI not working)")
         r = self.store.round(key)
         if r and r["ai_mover"]:
-            lines.append(f"🚀 {esc(self.short)}'s biggest mover: <b>{esc(r['ai_mover'])}</b>"
+            lines.append(f"🚀 {esc(self.short)} thinks <b>{esc(r['ai_mover'])}</b> will move the most"
                          + (f": {esc(r['ai_mover_reason'])}" if r["ai_mover_reason"] else ""))
         mid = at(day, MIDGAME)
         if mid <= close_at(day) - MIDGAME_LATEST:
-            lines.append(f"Halftime at {_sg(mid)} Singapore, results at {_sg(close_at(day) + SETTLE_DELAY)}.")
+            lines.append(f"Halfway update at {_sg(mid)}, results at {_sg(close_at(day) + SETTLE_DELAY)} (Singapore time).")
         else:
-            lines.append(f"Results at {_sg(close_at(day) + SETTLE_DELAY)} Singapore.")
+            lines.append(f"Results at {_sg(close_at(day) + SETTLE_DELAY)} Singapore time.")
         return "\n".join(lines)
 
     def results_text(self, day: dt.date, chat_id: int | None = None, banter: str = "") -> str:
@@ -335,45 +340,46 @@ class Game:
             if s["result"] in ("UP", "DOWN"):
                 mine = [v for v in votes if v["ticker"] == s["ticker"] and ours(v["user_id"])]
                 right = [v for v in mine if v["call"] == s["result"]]
-                ai = "" if not s["ai_call"] else (" · AI ✅" if s["ai_call"] == s["result"] else " · AI ❌")
+                ai = "" if not s["ai_call"] else (f" · {esc(self.short)} " + ("✅" if s["ai_call"] == s["result"] else "❌"))
                 lines.append(f"{ARROW[s['result']]} <b>{esc(s['ticker'])}</b> {s['open']:.2f} → {s['close']:.2f} "
-                             f"({move_of(s):+.1%}) · {len(right)}/{len(mine)} right{ai}")
+                             f"({move_of(s):+.1%}) · {len(right)} of {len(mine)} got it right{ai}")
                 if mine and 0 < len(right) <= len(mine) / 3:
                     contrarians.append(f"{', '.join(esc(v['name']) for v in right)} on {esc(s['ticker'])}")
             else:
-                why = "closed flat" if s["result"] == "FLAT" else "price unavailable"
-                lines.append(f"➖ <b>{esc(s['ticker'])}</b>: no result ({why}), not scored")
+                why = "price didn't change" if s["result"] == "FLAT" else "price not available"
+                lines.append(f"➖ <b>{esc(s['ticker'])}</b>: no result ({why}), no points")
         r = self.store.round(key)
         if r and r["mover"] and r["mover"] != VOID:
             big = next(s for s in stocks if s["ticker"] == r["mover"])
             picks = [b for b in self.store.bonus(key) if ours(b["user_id"])]
             got = [esc(b["name"]) for b in picks if b["pick"] == r["mover"]]
-            ai = "" if not r["ai_mover"] else (" · AI ✅" if r["ai_mover"] == r["mover"] else " · AI ❌")
-            lines.append(f"🚀 Biggest mover: <b>{esc(r['mover'])}</b> ({move_of(big):+.1%})"
+            ai = "" if not r["ai_mover"] else (f" · {esc(self.short)} " + ("✅" if r["ai_mover"] == r["mover"] else "❌"))
+            lines.append(f"🚀 Moved the most: <b>{esc(r['mover'])}</b> ({move_of(big):+.1%})"
                          + (f" · +2 for {', '.join(got)}" if got else f" · {len(picks)} tried, nobody got it") + ai)
         elif r and r["mover"] == VOID:
-            lines.append("🚀 Biggest mover: not scored today (a price was missing)")
-        scored = [s for s in stocks if s["result"] in ("UP", "DOWN")]
+            lines.append("🚀 Moved the most: no points today (a price was missing)")
+        scored = [s for s in stocks if s["result"] in ("UP", "DOWN") and s["ai_call"]]
         group_right = sum(crowd.get(s["ticker"]) == s["result"] for s in scored)
-        ai_right = sum(s["ai_call"] == s["result"] for s in scored if s["ai_call"])
-        if crowd:
-            verdict = ("the group wins 🧠" if group_right > ai_right else "AI wins 🤖" if ai_right > group_right
-                       else "draw 🤝")
-            lines.append(f"🧠 Group brain {group_right}/{len(scored)} vs {esc(self.short)} {ai_right}/{len(scored)}: {verdict}")
+        ai_right = sum(s["ai_call"] == s["result"] for s in scored)
+        if crowd and scored:
+            verdict = ("the group wins! 🎉" if group_right > ai_right else f"{esc(self.short)} wins 🤖"
+                       if ai_right > group_right else "a draw 🤝")
+            lines.append(f"👥 The group together got {group_right} of {len(scored)} right, {esc(self.short)} got "
+                         f"{ai_right} of {len(scored)}: {verdict}")
         if contrarians:
-            lines.append("🦅 Against the crowd and right: " + "; ".join(contrarians))
+            lines.append("🦅 Right when most people were wrong: " + "; ".join(contrarians))
         today = self.store.scores(key, key, chat_id)
         streaks = self.store.streaks()
         if today:
             bot = next((r for r in today if r["user_id"] == BOT_ID), None)
             humans = [r for r in today if r["user_id"] != BOT_ID]
-            lines += ["", "<b>Today</b>", *board_lines(today, streaks=streaks)]
+            lines += ["", "<b>Today's scores</b>", *board_lines(today, streaks=streaks)]
             if bot and humans:
                 beat = [esc(r["name"]) for r in humans if r["points"] > bot["points"]]
                 lines.append(f"🏆 Beat {esc(self.short)} today: " + ", ".join(beat) if beat
                              else f"🤖 Nobody beat {esc(self.short)} today.")
         if r and r["lesson"]:
-            lines += ["", f"📚 <b>Lesson:</b> {esc(r['lesson'])}"]
+            lines += ["", f"📚 <b>Tip:</b> {esc(r['lesson'])}"]
         if banter:
             lines += ["", f"💬 <b>{esc(self.bot)}:</b> {esc(banter)}"]
         ws = week_start(day).isoformat()
@@ -381,21 +387,25 @@ class Game:
         if last_of_week(day):
             g, a, n = self.group_vs_ai(ws, key, chat_id)
             if n:
-                lines.append(f"🧠 This week: group brain {g}/{n} vs {esc(self.short)} {a}/{n}")
-            lines += ["", "<b>Titles of the week</b>", *self.titles(ws, key, chat_id)]
+                lines.append(f"👥 This week the group together got {g} of {n} right, {esc(self.short)} got {a} of {n}")
+            lines += ["", "<b>This week's awards</b>", *self.titles(ws, key, chat_id)]
             lines += self.league_lines(ws, key, chat_id)
-        lines.append("Tap ❓ below: why did each stock move?")
+        lines.append("Tap ❓ below to see why each stock went up or down.")
         return "\n".join(lines)
 
     def group_vs_ai(self, since: str, until: str, chat_id: int | None) -> tuple[int, int, int]:
+        """Same count as the daily line: every scored stock the AI played, on days the group played; a tied group
+        vote counts as not right."""
         g = a = n = 0
         for row in self.store.db.execute("SELECT day FROM rounds WHERE status='settled' AND day BETWEEN ? AND ?",
                                          (since, until)).fetchall():
             crowd = self.crowd(row["day"], chat_id)
+            if not crowd:
+                continue
             for s in self.store.stocks(row["day"]):
-                if s["result"] in ("UP", "DOWN") and s["ticker"] in crowd and s["ai_call"]:
+                if s["result"] in ("UP", "DOWN") and s["ai_call"]:
                     n += 1
-                    g += crowd[s["ticker"]] == s["result"]
+                    g += crowd.get(s["ticker"]) == s["result"]
                     a += s["ai_call"] == s["result"]
         return g, a, n
 
@@ -409,25 +419,25 @@ class Game:
         bot = next((r for r in rows if r["user_id"] == BOT_ID), None)
         humans = [r for r in rows if r["user_id"] != BOT_ID and r["played"] >= MIN_TITLE_PICKS]
         if not humans:
-            return [f"(nobody made {MIN_TITLE_PICKS}+ picks)"]
+            return [f"(nobody made {MIN_TITLE_PICKS} or more picks)"]
         top, out = humans[0], []
         if not bot or top["points"] > bot["points"]:
-            out.append(f"👑 Bot Slayer: <b>{esc(top['name'])}</b> ({pts(top['points'])})")
+            out.append(f"👑 Best player, and beat {esc(self.short)}: <b>{esc(top['name'])}</b> ({pts(top['points'])})")
         elif top["points"] == bot["points"]:
-            out.append(f"👑 Top Human: <b>{esc(top['name'])}</b> ({pts(top['points'])}), tied with {esc(self.short)} 😤")
+            out.append(f"👑 Best player: <b>{esc(top['name'])}</b> ({pts(top['points'])}), tied with {esc(self.short)} 😤")
         else:
-            out.append(f"👑 Top Human: <b>{esc(top['name'])}</b> ({pts(top['points'])}), "
-                       f"but {esc(self.short)} won the week with {pts(bot['points'])} 🤖")
+            out.append(f"👑 Best player: <b>{esc(top['name'])}</b> ({pts(top['points'])}), "
+                       f"but {esc(self.short)} did better with {pts(bot['points'])} 🤖")
         if len(humans) > 1:
             low = humans[-1]
-            out.append(f"🤡 {esc(self.short)}'s Snack: <b>{esc(low['name'])}</b> ({pts(low['points'])})")
+            out.append(f"🤡 Last place: <b>{esc(low['name'])}</b> ({pts(low['points'])})")
         return out
 
     def league_lines(self, since: str, until: str, chat_id: int | None) -> list[str]:
         table = self.store.league(since, until)
         if len(table) < 2:
             return []
-        out = ["", "<b>🏟 League this week</b> (average points per player)"]
+        out = ["", "<b>🏟 Groups this week</b> (average score per player)"]
         for i, g in enumerate(table[:5], 1):
             out.append(f"{i}. {esc(g['title'])}: {g['avg']:.1f} ({g['players']} players)")
         mine = next((i for i, g in enumerate(table, 1) if g["chat_id"] == chat_id), None)
@@ -548,12 +558,12 @@ class Game:
             "(SELECT 1 FROM votes v WHERE v.user_id=p.user_id AND v.day >= ? AND v.day < ?) ORDER BY p.name",
             (key, chat_id, BOT_ID, since, key)).fetchall()
         missing = [r for r in rows if r["today"] < n]
-        text = "⏰ <b>10 minutes to lock!</b> "
+        text = "⏰ <b>10 minutes left to pick!</b> "
         if missing:
             text += ", ".join(mention(r["user_id"], r["name"]) + (f" ({n - r['today']} left)" if r["today"] else "")
-                              for r in missing) + f": your picks vs {esc(self.bot)} are waiting."
+                              for r in missing) + ": make your picks."
         else:
-            text += f"{self.voters(key, chat_id)} player(s) in so far. Last chance to beat {esc(self.bot)}."
+            text += f"{self.voters(key, chat_id)} player(s) so far. Last chance to beat {esc(self.bot)}."
         self.store.set(f"reminded:{key}:{chat_id}", "1")
         self.send(chat_id, text)
 
@@ -606,7 +616,7 @@ class Game:
             self.log(f"halftime quotes failed: {e!r}"[:300])
             return
         now_result, moves = {}, {}
-        head = [f"⏱ <b>Halftime</b> · {day:%a %d %b} (live prices, not final)"]
+        head = [f"⏱ <b>Halfway update</b> · {day:%a %d %b} (prices right now, not final)"]
         for s in stocks:
             info = q.get(s["ticker"]) or {}
             today = info.get("update_time") and info["update_time"].date() == day
@@ -615,12 +625,12 @@ class Game:
             if o and last:
                 res = "UP" if last > o else "DOWN" if last < o else None
                 now_result[s["ticker"]], moves[s["ticker"]] = res, last / o - 1
-                head.append(f"{ARROW.get(res, '➖')} <b>{esc(s['ticker'])}</b> {last / o - 1:+.1%} since the open")
+                head.append(f"{ARROW.get(res, '➖')} <b>{esc(s['ticker'])}</b> {last / o - 1:+.1%} since the market opened")
             else:
-                head.append(f"➖ <b>{esc(s['ticker'])}</b>: no live price")
+                head.append(f"➖ <b>{esc(s['ticker'])}</b>: no price yet")
         lead = max(moves, key=lambda t: abs(moves[t])) if len(moves) == len(stocks) and moves else None
         if lead:
-            head.append(f"🚀 Biggest mover so far: <b>{esc(lead)}</b> ({moves[lead]:+.1%})")
+            head.append(f"🚀 Moving the most so far: <b>{esc(lead)}</b> ({moves[lead]:+.1%})")
         totals: dict[int, list] = {}
         for v in self.store.votes(key):
             t = totals.setdefault(v["user_id"], [v["name"], 0])
@@ -638,16 +648,16 @@ class Game:
             if crowd and now_result:
                 g = sum(crowd.get(t) == res for t, res in now_result.items() if res)
                 a = sum(s["ai_call"] == now_result.get(s["ticker"]) for s in stocks if s["ai_call"] and now_result.get(s["ticker"]))
-                lines.append(f"🧠 Group brain {g} vs {esc(self.short)} {a} so far")
+                lines.append(f"👥 So far the group together has {g} right, {esc(self.short)} has {a}")
             ranked = sorted(mine.items(), key=lambda kv: -kv[1][1])
             if ranked:
-                lines += ["", "<b>If it ended now</b>"] + [f"{esc(n)}: {pts(p)}" for _, (n, p) in ranked[:10]]
+                lines += ["", "<b>Scores if the day ended now</b>"] + [f"{esc(n)}: {pts(p)}" for _, (n, p) in ranked[:10]]
                 bot = mine.get(BOT_ID)
                 humans = [p for uid, (_, p) in mine.items() if uid != BOT_ID]
                 if bot and humans:
                     lines.append(f"🤖 {esc(self.short)} is losing 😬" if max(humans) > bot[1]
-                                 else f"🤖 {esc(self.short)} is leading 😎" if max(humans) < bot[1]
-                                 else f"🤖 Neck and neck with {esc(self.short)} 😤")
+                                 else f"🤖 {esc(self.short)} is winning 😎" if max(humans) < bot[1]
+                                 else f"🤖 It's a tie with {esc(self.short)} 😤")
             self.send(chat, "\n".join(lines), silent=False)  # around midnight Singapore: the point is to ping
         self.store.set(f"halftime:{key}", "posted")
 
@@ -708,8 +718,9 @@ class Game:
                 self.log(f"why failed: {e!r}"[:300])
         for s in stocks:
             text = why.get(s["ticker"]) or (
-                f"{s['ticker']} {move_of(s):+.1%} from the open, with no clear news behind it: probably market-wide "
-                "moves or noise. Most daily moves are." if move_of(s) is not None else "No price, so no result today.")
+                f"{s['ticker']} went {move_of(s):+.1%} today and there was no clear news about it. Most daily moves "
+                "like this are random or follow the whole market." if move_of(s) is not None
+                else "No price, so no result today.")
             self.store.update_stock(key, s["ticker"], why=text)
         lesson = None
         if self.teach and scored:
@@ -759,7 +770,7 @@ class Game:
                 self.store.add_chat(chat_id, title, c["joined_at"])
             return True
         if len(self.store.chats()) >= self.max_groups:
-            self.send(chat_id, f"Sorry, {esc(self.title)} is full right now ({self.max_groups} groups).")
+            self.send(chat_id, f"Sorry, {esc(self.title)} is full right now ({self.max_groups} groups max).")
             try:
                 self.tg.leave(chat_id)
             except Exception:
@@ -780,9 +791,9 @@ class Game:
         key = day.isoformat()
         r = self.store.round(key)
         if r is None or ticker not in {s["ticker"] for s in self.store.stocks(key)}:
-            return None, "That round no longer exists."
+            return None, "That game is over."
         if r["status"] != "open" or now >= lock_at(day):
-            return None, "Too late: picks are locked."
+            return None, "Too late: picks are closed."
         return (day, key, ticker, parts), ""
 
     def on_button(self, data: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None = None) -> str:
@@ -814,7 +825,6 @@ class Game:
         return (s and s.get("why")) or "No explanation for this one yet."
 
     def on_reason(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
-        got, err = self._open_round(data + "|", now) if False else (None, "")
         parts = data.split("|")
         if len(parts) != 3 or parts[2] not in REASONS:
             return "Unknown button."
@@ -824,12 +834,12 @@ class Game:
             return "Unknown button."
         r = self.store.round(day.isoformat())
         if r is None:
-            return "That round no longer exists."
+            return "That game is over."
         if r["status"] != "open" or now >= lock_at(day):
-            return "Too late: picks are locked."
+            return "Too late: picks are closed."
         self.store.player(user_id, name)
         self.store.set_reason(day.isoformat(), user_id, parts[2])
-        return f"Today's picks driven by {REASONS[parts[2]]}. Your Friday report shows which reasons work for you."
+        return f"Got it: today you picked mainly by {REASONS[parts[2]]}. On Friday you'll see which reason works best for you."
 
     def on_vote(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
         got, err = self._open_round(data, now)
@@ -845,11 +855,11 @@ class Game:
         mine = next((v for v in self.store.votes(key) if v["user_id"] == user_id and v["ticker"] == ticker), None)
         if mine and mine["call"] == call and mine.get("conf") == conf:
             self.store.unvote(key, ticker, user_id)
-            return f"{ticker}: pick removed (skip, 0 points)."
+            return f"{ticker}: pick cancelled (0 points)."
         self.store.vote(key, ticker, user_id, call, now.isoformat(), conf)
         win, lose = CONF[conf]
-        return (f"{ticker} {icon(call, conf)} {CONF_LABEL[conf]} {'up' if call == 'UP' else 'down'}: "
-                f"+{win} if right, {lose} if wrong. Tap again to undo.")
+        return (f"{ticker} {icon(call, conf)}: {CONF_LABEL[conf].lower()} it goes {'up' if call == 'UP' else 'down'}. "
+                f"+{win} if right, {lose} if wrong. Tap again to cancel.")
 
     def on_mover(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
         got, err = self._open_round(data, now)
@@ -858,7 +868,7 @@ class Game:
         day, key, ticker, _ = got
         self.store.player(user_id, name)
         self.store.set_bonus(key, user_id, ticker, now.isoformat())
-        return f"🚀 Biggest mover: {ticker}. +2 if it moves the most, up or down."
+        return f"🚀 {ticker}: +2 if it moves the most today, up or down."
 
     def on_command(self, text: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None = None):
         """Returns (text, buttons), {"photo": png, "caption": text}, or None for commands it doesn't know."""
@@ -876,7 +886,7 @@ class Game:
         if cmd == "/today":
             row = self.store.db.execute("SELECT day FROM rounds ORDER BY day DESC LIMIT 1").fetchone()
             if not row:
-                return "No round yet. The first one is posted before the next US open.", None
+                return "No game yet. The next one comes before the US market opens.", None
             day = dt.date.fromisoformat(row["day"])
             r = self.store.round(row["day"])
             stocks = self.store.stocks(row["day"])
@@ -891,7 +901,7 @@ class Game:
             return ("<b>This week</b>\n" + "\n".join(board_lines(self.store.scores(
                         week_start(today).isoformat(), today.isoformat(), chat_id), streaks=streaks))
                     + "\n\n<b>All time</b>\n" + "\n".join(board_lines(self.store.scores(chat_id=chat_id), streaks=streaks))
-                    + "\n\n<b>Last week's titles</b>\n"
+                    + "\n\n<b>Last week's awards</b>\n"
                     + "\n".join(self.titles(last_week.isoformat(), (last_week + dt.timedelta(days=6)).isoformat(),
                                             chat_id))), None
         if cmd == "/me":
@@ -899,20 +909,21 @@ class Game:
             mine = next((r for r in rows if r["user_id"] == user_id), None)
             bot = next((r for r in rows if r["user_id"] == BOT_ID), None)
             if not mine or not mine["played"]:
-                return f"{esc(name)}: no settled picks yet. Tap the buttons on today's round!", None
+                return f"{esc(name)}: no scores yet. Play today's game!", None
             streak = self.store.streaks().get(user_id, 0)
             won, tried = self.store.mover_record(user_id)
-            vs = f"\n{esc(self.bot)}: {pts(bot['points'])} ({bot['correct']}/{bot['played']})" if bot else ""
-            return (f"{esc(name)}: {pts(mine['points'])} · {mine['correct']}/{mine['played']} correct "
-                    f"({mine['correct'] / mine['played']:.0%}) · 🔥 {streak} in a row · 🚀 {won}/{tried} movers{vs}"), None
+            vs = f"\n{esc(self.bot)}: {pts(bot['points'])}, right {bot['correct']} of {bot['played']}" if bot else ""
+            return (f"{esc(name)}: {pts(mine['points'])} · right {mine['correct']} of {mine['played']} "
+                    f"({mine['correct'] / mine['played']:.0%}) · 🔥 {streak} right in a row"
+                    + (f" · 🚀 {won} of {tried} biggest movers" if tried else "") + vs), None
         if cmd == "/bot":
             return self.bot_text(), None
         if cmd == "/report":
             lines = self.report_lines(user_id)
             if not lines:
-                return (f"{esc(name)}: no settled confidence picks yet. Play a round with ⏫ ⬆️ ⬇️ ⏬ "
-                        "and your report builds up."), None
-            return f"📊 <b>{esc(name)}'s decision report (all time)</b>\n" + "\n".join(lines), None
+                return (f"{esc(name)}: no results yet. Play a few games with ⏫ ⬆️ ⬇️ ⏬ "
+                        "and your report will show up here."), None
+            return f"📊 <b>{esc(name)}: how good are your choices? (all time)</b>\n" + "\n".join(lines), None
         if cmd == "/card":
             return self.personal_card(user_id, name, ny.date())
         if cmd == "/league":
@@ -930,7 +941,7 @@ class Game:
         rows = self.store.scores()
         me = next((r for r in rows if r["user_id"] == BOT_ID), None)
         if not me or not me["played"]:
-            return f"{esc(self.bot)} hasn't finished a round yet. Come back after the first results."
+            return f"{esc(self.short)} has no results yet. Check again after the first results."
         humans = [r for r in rows if r["user_id"] != BOT_ID and r["played"]]
         beaten = sum(r["points"] > me["points"] for r in humans)
         won, tried = self.store.mover_record(BOT_ID)
@@ -938,21 +949,24 @@ class Game:
         cal = self.calibration(BOT_ID)
         wrong = sorted((c for c in calls if c["call"] != c["result"]), key=lambda c: -abs(move_of(c)))[:3]
         right = sorted((c for c in calls if c["call"] == c["result"]), key=lambda c: -abs(move_of(c)))[:1]
-        lines = [f"🤖 <b>{esc(self.short)}'s record</b>",
-                 f"{pts(me['points'])} · {me['correct']}/{me['played']} calls right ({me['correct'] / me['played']:.0%}) "
-                 f"· 🔥 {self.store.streaks().get(BOT_ID, 0)} in a row · 🚀 {won}/{tried} movers",
-                 f"When it said <b>Sure</b>: {pct(*cal['sure'])} right (needs 69% to pay)",
-                 f"When it said <b>Lean</b>: {pct(*cal['lean'])} right (needs 57%)",
-                 f"Humans ahead of it all-time: {beaten} of {len(humans)}",
-                 "<i>Lesson: a confident voice isn't evidence. Check any tipster's record, AI or human.</i>"]
+        lines = [f"🤖 <b>How good is {esc(self.short)}?</b>",
+                 f"{pts(me['points'])} · right {me['correct']} of {me['played']} ({me['correct'] / me['played']:.0%}) "
+                 f"· 🔥 {self.store.streaks().get(BOT_ID, 0)} right in a row"
+                 + (f" · 🚀 {won} of {tried} biggest movers" if tried else "")]
+        if cal["sure"][1]:
+            lines.append(f"When it was <b>very sure</b>: right {pct(*cal['sure'])} (it needs 69% to gain points)")
+        if cal["lean"][1]:
+            lines.append(f"When it said <b>think so</b>: right {pct(*cal['lean'])} (it needs 57%)")
+        lines += [f"Players doing better than it: {beaten} of {len(humans)}",
+                  "<i>Tip: sounding sure doesn't make someone right. Always check their record, AI or person.</i>"]
         if wrong:
-            lines += ["", "<b>Hall of shame</b>"]
+            lines += ["", "<b>Worst picks</b>"]
             for c in wrong:
                 lines.append(f"❌ {esc(c['ticker'])} {ARROW[c['call']]} on {dt.date.fromisoformat(c['day']):%d %b}, "
                              f"went {move_of(c):+.1%}" + (f": <i>{esc(c['ai_reason'])}</i>" if c["ai_reason"] else ""))
         if right:
             c = right[0]
-            lines += ["", f"<b>Best call</b>\n✅ {esc(c['ticker'])} {ARROW[c['call']]} on "
+            lines += ["", f"<b>Best pick</b>\n✅ {esc(c['ticker'])} {ARROW[c['call']]} on "
                           f"{dt.date.fromisoformat(c['day']):%d %b}, went {move_of(c):+.1%}"]
         return "\n".join(lines)
 
@@ -965,13 +979,13 @@ class Game:
         out = []
         k, n = cal["sure"]
         if n:
-            verdict = ("✅ your Sure picks paid" if k / n >= 11 / 16 else
-                       "⚠️ overconfident: Sure needs 69%; use Lean or skip more")
-            out.append(f"Sure: {pct(k, n)} · {verdict}")
+            verdict = ("✅ good, being very sure paid off" if k / n >= 11 / 16 else
+                       "⚠️ too confident. 'Very sure' needs to be right 69% of the time: use 'think so' or skip more")
+            out.append(f"When very sure: right {pct(k, n)} · {verdict}")
         k, n = cal["lean"]
         if n:
-            out.append(f"Lean: {pct(k, n)} · " + ("✅ above the 57% it needs" if k / n >= 4 / 7 else
-                                                   "⚠️ below the 57% it needs: skip when unsure"))
+            out.append(f"When 'think so': right {pct(k, n)} · " + ("✅ good, above the 57% needed" if k / n >= 4 / 7 else
+                                                                    "⚠️ below the 57% needed: skip when you're not sure"))
         by: dict[str, list[int]] = {}
         for d in ds:
             if d["reason"]:
@@ -980,10 +994,10 @@ class Game:
                 b[1] += 1
         if by:
             parts = [f"{REASONS[r].split()[0]} {pct(*v)}" for r, v in sorted(by.items(), key=lambda kv: -kv[1][0] / kv[1][1])]
-            out.append("By reason: " + " · ".join(parts))
+            out.append("Right, by reason: " + " · ".join(parts))
         skips = len(self.store.skipped(user_id, since, until))
         if skips:
-            out.append(f"Skipped {skips} stock{'s' if skips != 1 else ''} (0 points each: fine when you had no edge)")
+            out.append(f"Skipped {skips} stock{'s' if skips != 1 else ''} (0 points: good when you're not sure)")
         return out
 
     def group_report(self, chat_id: int, since: str, until: str) -> str:
@@ -998,15 +1012,15 @@ class Game:
                 blocks.append(f"<b>{esc(name['name'])}</b>\n" + "\n".join(lines))
         if not blocks:
             return ""
-        return ("📊 <b>Decision report: this week</b>\nGood deciders are right as often as they are sure.\n\n"
-                + "\n\n".join(blocks) + "\n\n/report anytime for your all-time report.")
+        return ("📊 <b>How good were our choices this week?</b>\nThe best players are right about as often as they "
+                "feel sure.\n\n" + "\n\n".join(blocks) + "\n\nType /report any time to see your own.")
 
     def personal_card(self, user_id: int, name: str, today: dt.date):
         since, until = week_start(today).isoformat(), today.isoformat()
         rows = self.store.scores(since, until)
         me = next((r for r in rows if r["user_id"] == user_id), None)
         if not me:
-            return f"{esc(name)}: no settled picks this week yet, so no scorecard. Play today's round!", None
+            return f"{esc(name)}: no scores this week yet. Play today's game!", None
         bot = next((r for r in rows if r["user_id"] == BOT_ID), None)
         try:
             png = self.cards.personal_card(self.title, self.short, name, since, until, me, bot,
@@ -1020,22 +1034,22 @@ class Game:
 
     def league_command(self, arg: str, chat_id: int | None, today: dt.date) -> str:
         if chat_id is None:
-            return "The league is for groups: use /league in your game group."
+            return "The league is for groups. Use /league in your game group."
         if arg == "join":
             self.store.set_league(chat_id, True)
-            return "🏟 This group is in the league: its name and average score are shown to the other groups."
+            return "🏟 This group joined the league. Other groups can see its name and average score."
         if arg == "leave":
             self.store.set_league(chat_id, False)
-            return "This group left the league and is no longer shown to other groups."
+            return "This group left the league. Other groups can't see it any more."
         c = self.store.chat(chat_id)
         table = self.store.league(week_start(today).isoformat(), today.isoformat())
-        lines = ["🏟 <b>League this week</b> (groups ranked by average points per player, 2+ players)"]
+        lines = ["🏟 <b>Groups this week</b> (average score per player, groups with 2 or more players)"]
         lines += [f"{i}. {esc(g['title'])}: {g['avg']:.1f} ({g['players']} players)" for i, g in enumerate(table, 1)]
         if not table:
-            lines.append("(no groups ranked yet)")
+            lines.append("(no groups yet)")
         lines.append("" if c and c["league"] else "")
-        lines.append("This group is in the league. /league leave to hide it." if c and c["league"]
-                     else "This group is not in the league. /league join to compete (shows the group name to others).")
+        lines.append("This group is in the league. Type /league leave to leave." if c and c["league"]
+                     else "This group isn't in the league. Type /league join to join (other groups will see the group's name).")
         return "\n".join(x for x in lines if x != "")
 
     # ---------------------------------------------------------------- practice
@@ -1050,7 +1064,7 @@ class Game:
     def practice_start(self, now: dt.datetime, chat_id=None) -> tuple[str, list | None]:
         p = self._practice(chat_id)
         if p and not p.get("revealed") and now < dt.datetime.fromisoformat(p["ends"]) + dt.timedelta(minutes=5):
-            return "A practice round is already running: tap the buttons above.", None
+            return "A practice game is already on. Tap the buttons above.", None
         if p and now < dt.datetime.fromisoformat(p["ends"]) - dt.timedelta(seconds=PRACTICE_SECONDS) + PRACTICE_COOLDOWN:
             wait = dt.datetime.fromisoformat(p["ends"]) - dt.timedelta(seconds=PRACTICE_SECONDS) + PRACTICE_COOLDOWN - now
             return f"Practice again in {max(1, round(wait.total_seconds() / 60))} min.", None
@@ -1060,7 +1074,7 @@ class Game:
             q = self.quotes(tickers)
         except Exception as e:
             self.log(f"practice quotes failed: {e!r}"[:300])
-            return "Practice needs live quotes and Moomoo isn't answering right now. Try again in a bit.", None
+            return "Can't get prices right now. Try again soon.", None
         stocks = []
         for t in tickers:
             info = q.get(t) or {}
@@ -1071,7 +1085,7 @@ class Game:
             stocks.append({"ticker": t, "name": info.get("name") or t, "open": info["open"], "close": info["last"],
                            "day": ut.date().isoformat(), "live": live, "ai_call": None, "ai_reason": ""})
         if not stocks:
-            return "No usable prices for practice right now. Try again in a bit.", None
+            return "Can't get prices right now. Try again soon.", None
         recent = [t for t in json.loads(self.store.get("practice_ai", "[]"))
                   if now - dt.datetime.fromisoformat(t) < dt.timedelta(hours=1)]
         if len(recent) < PRACTICE_AI_PER_HOUR and self.ai_ready():
@@ -1087,9 +1101,9 @@ class Game:
                                                           "stocks": stocks, "votes": {}, "names": {}}))
         day = dt.date.fromisoformat(stocks[0]["day"])
         when = "so far today" if stocks[0]["live"] else f"on {day:%a %d %b}"
-        lines = [f"🧪 <b>Practice round</b> (not scored) · answers in {PRACTICE_SECONDS // 60} minutes",
-                 f"Did each stock finish <b>above ⬆️ or below ⬇️ its opening price</b> {when}? No peeking at charts!",
-                 f"{esc(self.bot)} has made its calls too.", ""]
+        lines = [f"🧪 <b>Practice game</b> (no points) · answers in {PRACTICE_SECONDS // 60} minutes",
+                 f"Did each stock end <b>higher ⬆️ or lower ⬇️</b> than when the market opened {when}? No checking charts!",
+                 f"{esc(self.bot)} has picked too.", ""]
         lines += [f"<b>{esc(s['ticker'])}</b> {esc(s['name'])}" for s in stocks]
         buttons = [[(f"⬆️ {s['ticker']}", f"p|{pid}|{s['ticker']}|U"), (f"⬇️ {s['ticker']}", f"p|{pid}|{s['ticker']}|D")]
                    for s in stocks]
@@ -1102,9 +1116,9 @@ class Game:
         except ValueError:
             return "Unknown button."
         if not p or p["id"] != pid or ticker not in {s["ticker"] for s in p["stocks"]} or c not in ("U", "D"):
-            return "That practice round is over. Send /practice for a new one."
+            return "That practice game is over. Type /practice for a new one."
         if now >= dt.datetime.fromisoformat(p["ends"]):
-            return "Time's up: answers coming."
+            return "Time's up! Answers coming."
         call = "UP" if c == "U" else "DOWN"
         p["votes"].setdefault(str(user_id), {})[ticker] = call
         p["names"][str(user_id)] = name
@@ -1141,10 +1155,10 @@ class Game:
             lines.append("")
             lines += [f"{esc(p['names'][uid])}: {k}/{n}" for uid, k in sorted(right.items(), key=lambda kv: -kv[1])]
         else:
-            lines += ["", "Nobody played. Send /practice to try again."]
+            lines += ["", "Nobody played. Type /practice to try again."]
         if any(s["ai_call"] for s in p["stocks"]):
             lines.append(f"{esc(self.bot)}: {bot_right}/{n}")
-        lines.append("The real round posts every US trading day at 20:30 Singapore (19:30 in summer).")
+        lines.append("The real game comes every US trading day at 20:30 Singapore time (19:30 in summer).")
         return "\n".join(lines)
 
     # ---------------------------------------------------------------- weekend quiz
@@ -1176,8 +1190,8 @@ class Game:
         game_q = quiz.game_question(moves)
         if game_q:
             qs.append(game_q)
-        self.send(chat_id, f"🧩 <b>Weekend quiz</b>: {len(qs)} questions on money and decisions. Tap an answer to see "
-                           "if you're right and why. Scores on Sunday at 20:00.")
+        self.send(chat_id, f"🧩 <b>Weekend quiz</b>: {len(qs)} questions about money and making choices. Tap an answer "
+                           "to see if you're right and why. Scores on Sunday at 8pm.")
         for i, (question, options, right, explain) in enumerate(qs):
             try:
                 poll_id = self.tg.send_poll(question, options, right, explain, chat_id=chat_id)
@@ -1196,10 +1210,10 @@ class Game:
     def quiz_results(self, chat_id: int, week: str) -> str:
         rows = self.store.quiz_scores(chat_id, week)
         if not rows:
-            return "🧩 Nobody tried this weekend's quiz. Next one on Saturday at 10:00!"
+            return "🧩 Nobody tried this weekend's quiz. Next one on Saturday at 10am!"
         medals = ["🥇", "🥈", "🥉"]
-        lines = ["🧩 <b>Weekend quiz results</b>"]
+        lines = ["🧩 <b>Weekend quiz scores</b>"]
         lines += [f"{medals[i] if i < 3 else f'{i + 1}.'} {esc(r['name'])}: {r['ok']}/{r['answered']}"
                   for i, r in enumerate(rows[:10])]
-        lines.append("New round of the game tomorrow evening. Good luck!")
+        lines.append("The next game is tomorrow evening. Good luck!")
         return "\n".join(lines)

@@ -18,6 +18,7 @@ Give an HONEST confidence (0.5 to 1.0) that your call is right; your record is s
 overconfidence will be exposed. Open-to-close direction is close to a coin flip: most calls deserve 0.5-0.6,
 and 0.7+ only with a clear, specific reason.
 Keep the reason to one short, punchy sentence (light trash talk at the humans is welcome, nothing rude).
+Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst').
 Answer with ONE JSON object and nothing else: {"call":"UP|DOWN","confidence":0.55,"reason":"..."}"""
 
 
@@ -99,7 +100,8 @@ BANTER = """You are "{bot}", a cocky AI that just finished a daily stock-calling
 You get today's results as JSON: each stock's result, and each player's points, correct calls and picks played
 (your own row has user_id equal to "you"). Write the results-time banter: at most 2 short sentences,
 naming 1 to 3 players. Tease bad PICKS, give grudging respect to anyone who beat you, gloat if you won.
-Playful only: no profanity, nothing about anyone's identity, looks, money or life. Plain text, no JSON, no hashtags."""
+Playful only: no profanity, nothing about anyone's identity, looks, money or life. Plain text, no JSON, no hashtags.
+Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst')."""
 
 
 def banter(s: Settings, summary: dict, session=None, timeout: float = 120) -> str | None:
@@ -119,7 +121,8 @@ def banter(s: Settings, summary: dict, session=None, timeout: float = 120) -> st
 MOVER = """You are "{bot}", a cocky AI in a daily stock game. Below are today's stocks with the previous close,
 pre-market price and headlines. Bonus question: which ONE will have the LARGEST absolute move (up or down) from
 today's OPEN to today's CLOSE? Big news, earnings and volatile names move more; the opening gap itself does not count.
-Use only the data given. Answer with ONE JSON object and nothing else:
+Use only the data given. Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst').
+Answer with ONE JSON object and nothing else:
 {"ticker":"XXX","reason":"one short punchy sentence"}"""
 
 
@@ -148,12 +151,13 @@ def call_mover(s: Settings, stocks: list[dict], session=None, timeout: float = 1
 LESSON = """You write ONE short daily lesson for a group game where friends call whether stocks close above or below
 their open. You get today's stocks (pre-market move, open-to-close move, the group's split) as JSON.
 Teach a decision-making habit (base rates, priced-in news, crowd vs individual, calibration, process vs outcome,
-noise vs signal) using today's data. Max 2 sentences, plain words, no jargon, no advice on what to buy or sell.
-Plain text only."""
+noise vs signal) using today's data. Max 2 sentences, no advice on what to buy or sell.
+Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst'). Plain text only."""
 
 WHY = """For each stock below you get its open-to-close move today and today's headlines. In at most 170 characters
 per stock, explain the most likely driver of the move using only these headlines. If none explains it, say it was
-probably market-wide moves or noise. No predictions, no advice. Answer with ONE JSON object mapping ticker to text."""
+probably the whole market moving, or random. No predictions, no advice. Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst').
+Answer with ONE JSON object mapping ticker to text."""
 
 
 def _text(s: Settings, system: str, user: str, session=None, timeout: float = 120, json_mode: bool = False):
