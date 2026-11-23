@@ -328,3 +328,20 @@ def test_quiet_at_night():
     assert night(dt.datetime(2026, 11, 24, 5, 10, tzinfo=sg))
     assert night(dt.datetime(2026, 11, 23, 23, 0, tzinfo=sg))
     assert not night(dt.datetime(2026, 11, 23, 22, 30, tzinfo=sg))
+
+
+def test_setup_helpers(tmp_path):
+    from btb.setup import group_chats, set_env
+    env = tmp_path / ".env"
+    env.write_text("# c\nBTB_TELEGRAM_TOKEN=\nGLM_MODEL=x\n")
+    set_env(env, "BTB_TELEGRAM_TOKEN", "1:abc")
+    set_env(env, "BTB_CHAT_ID", "-5")
+    assert env.read_text() == "# c\nBTB_TELEGRAM_TOKEN=1:abc\nGLM_MODEL=x\nBTB_CHAT_ID=-5\n"
+    assert oct(env.stat().st_mode)[-3:] == "600"
+    ups = [{"my_chat_member": {"chat": {"id": -1, "type": "group", "title": "Old"},
+                               "new_chat_member": {"status": "member"}}},
+           {"message": {"chat": {"id": 9, "type": "private"}}},
+           {"message": {"chat": {"id": -1, "type": "group", "title": "Old"}, "migrate_to_chat_id": -1001}},
+           {"my_chat_member": {"chat": {"id": -2, "type": "group", "title": "Left"},
+                               "new_chat_member": {"status": "left"}}}]
+    assert group_chats(ups) == {-1001: "Old"}

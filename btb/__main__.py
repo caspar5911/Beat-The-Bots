@@ -1,4 +1,4 @@
-"""python -m btb run | demo | whereami"""
+"""python -m btb run | demo | whereami | setup"""
 from __future__ import annotations
 
 import argparse
@@ -138,8 +138,11 @@ def whereami(s: Settings) -> int:  # pragma: no cover - network
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="btb")
-    p.add_argument("cmd", choices=["run", "demo", "whereami"])
+    p.add_argument("cmd", choices=["run", "demo", "whereami", "setup"])
     a = p.parse_args(argv)
+    if a.cmd == "setup":
+        from .setup import main as setup
+        return setup()
     s = Settings.from_env()
     return {"run": run, "demo": demo, "whereami": whereami}[a.cmd](s)
 

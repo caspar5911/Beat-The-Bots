@@ -20,7 +20,17 @@ The round still runs if the model is down (the Bot sits out), and a missed stage
 A stock whose open or close cannot be confirmed from quotes, or that closes exactly flat, is not scored.
 NYSE holidays and half-days are listed for 2026-2027 in `btb/market.py`.
 
-## Setup
+## Quick setup
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m btb setup
+```
+
+It asks for a new @BotFather token (hidden input), waits for you to add the bot to your group, saves both to
+`.env`, says hello in the group and starts the systemd user service. Set `GLM_BASE_URL` in `.env` first.
+
+## Manual setup
 
 Needs Python 3.12+, a running Moomoo OpenD (quote snapshots only; no history quota, no trade context) and an
 OpenAI-compatible model endpoint.
