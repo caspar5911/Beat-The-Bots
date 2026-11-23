@@ -18,8 +18,7 @@ DOWN whenever the evidence leans that way; never default to UP. Use only the dat
 Give an HONEST confidence (0.5 to 1.0) that your call is right; your record is shown to the players, so
 overconfidence will be exposed. Open-to-close direction is close to a coin flip: most calls deserve 0.5-0.6,
 and 0.7+ only with a clear, specific reason.
-Keep the reason to one short, punchy sentence under 90 characters (light trash talk at the humans is welcome,
-nothing rude).
+Explain your reason in one or two punchy sentences (light trash talk at the humans is welcome, nothing rude).
 Write in simple everyday English: short words, short sentences, no finance jargon (no 'gap', 'fade', 'priced in', 'momentum', 'catalyst', 'tops', 'bottoms', 'rally', 'sell-off').
 Answer with ONE JSON object and nothing else: {"call":"UP|DOWN","confidence":0.55,"reason":"..."}"""
 
@@ -61,7 +60,7 @@ def parse_call(content: str) -> tuple[str, str, float] | None:
         conf = conf if conf == conf else 0.5
     except (TypeError, ValueError):
         conf = 0.5
-    return call, str(data.get("reason", "")).strip()[:200], conf
+    return call, str(data.get("reason", "")).strip()[:600], conf
 
 
 def prompt(ticker: str, name: str, quote: dict, news: list[dict]) -> str:
