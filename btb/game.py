@@ -22,7 +22,7 @@ import random
 
 from . import market
 from .config import NY, SG
-from .store import BOT_ID, VOID, Store
+from .store import BOT_ID, CONF, VOID, Store
 from .telegram import Forbidden
 
 POOL = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "AVGO", "PLTR", "COIN",
@@ -50,7 +50,15 @@ PRACTICE_SECONDS = 120
 PRACTICE_COOLDOWN = dt.timedelta(minutes=10)  # per group, from the start of its last practice
 PRACTICE_AI_PER_HOUR = 6                       # across groups: the model is shared with other work
 
+SURE_AT = 0.7                     # the AI plays "sure" only at this confidence or more
+REASONS = {"news": "📰 News", "trend": "📈 Trend", "friends": "👥 Friends", "gut": "🎲 Gut"}
+CONF_LABEL = {"sure": "Sure", "lean": "Lean"}
+ICON = {("UP", "sure"): "⏫", ("UP", "lean"): "⬆️", ("DOWN", "lean"): "⬇️", ("DOWN", "sure"): "⏬"}
+QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
+QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
+
 COMMANDS = [("today", "Today's round"), ("board", "Leaderboard"), ("me", "Your score and streak"),
+            ("report", "Your decision report: confidence, reasons"),
             ("card", "Your weekly scorecard picture"), ("bot", "The AI's record and worst calls"),
             ("practice", "A quick 2-minute game, anytime"), ("league", "Groups vs groups (/league join)"),
             ("help", "How to play")]
@@ -120,10 +128,20 @@ def pts(n: int) -> str:
     return f"{n} pt" if abs(n) == 1 else f"{n} pts"
 
 
-def points(call: str, result: str | None, double: int) -> int:
+def points(call: str, result: str | None, double: int = 0, conf: str | None = None) -> int:
     if result not in ("UP", "DOWN"):
         return 0
+    if conf in CONF:
+        return CONF[conf][0] if call == result else CONF[conf][1]
     return (2 if double else 1) if call == result else (-1 if double else 0)
+
+
+def icon(call: str, conf: str | None) -> str:
+    return ICON.get((call, conf or "lean"), ARROW.get(call, "?"))
+
+
+def pct(k: int, n: int) -> str:
+    return f"{k}/{n} ({k / n:.0%})" if n else "0/0"
 
 
 def move_of(s: dict) -> float | None:
@@ -161,24 +179,53 @@ def fallback_banter(bot: str, today: list[dict]) -> str:
     return "Another day, another win for the machine 🤖"
 
 
+LESSONS = [
+    "A good decision can lose and a bad one can win. Judge your process: did you know something, or just guess?",
+    "Most daily moves are noise. If you can't say why you'd be right, a skip costs nothing.",
+    "Being sure feels good but costs a lot when wrong. Save Sure for when you'd bet on it ten times out of ten.",
+    "News that everyone has already seen is mostly priced in by the open.",
+    "Write down why you picked before you see the result: memory rewrites reasons after the fact.",
+]
+
+
+def fallback_lesson(stocks: list[dict], split: dict) -> str:
+    """A data-based lesson when the model is unavailable."""
+    scored = [s for s in stocks if move_of(s) is not None and s["result"] in ("UP", "DOWN")]
+    for s in sorted(scored, key=lambda s: -abs(pre_move(s) or 0)):
+        pm = pre_move(s)
+        if pm is not None and abs(pm) >= 0.03:
+            same = (pm > 0) == (s["result"] == "UP")
+            return (f"{s['ticker']} moved {pm:+.1%} before the open, then {'kept going' if same else 'reversed'} "
+                    f"({move_of(s):+.1%}) during the day. A big gap tells you little about what happens next.")
+    for s in scored:
+        c = split.get(s["ticker"])
+        if c and max(c["UP"], c["DOWN"]) >= 3 and (c["UP"] > c["DOWN"]) != (s["result"] == "UP"):
+            return f"Most of the group got {s['ticker']} wrong together. Crowds feel safe, but they share the same blind spots."
+    day = int(stocks[0]["day"].replace("-", "")) if stocks and stocks[0].get("day") else 0
+    return LESSONS[day % len(LESSONS)]
+
+
 def help_text(title: str, bot: str) -> str:
-    return (f"🎯 <b>{esc(title)}</b>\nEvery US trading day a round of stocks is posted before the open "
-            "(20:30 Singapore in winter, 19:30 in summer). Tap ⬆️ if you think a stock closes above its opening "
-            "price, ⬇️ if below. Tap 🎯 x2 on your surest pick to double it: +2 if right, −1 if wrong. "
-            "🚀 Bonus: name the stock that moves the most (either way) for +2. "
-            f"You can change your mind until the 09:30 New York open. {esc(bot)} (our own AI) plays too.\n"
-            "Halftime scores around midnight, results before breakfast, titles and scorecards every Friday.\n\n"
-            "/today: today's round · /board: leaderboard · /me: your record · /card: your weekly scorecard\n"
-            f"/bot: {esc(bot)}'s record · /league: groups vs groups · /practice: a 2-minute round anytime\n"
-            + DISCLAIMER)
+    return (f"🎯 <b>{esc(title)}</b>: a daily game about deciding under uncertainty.\n\n"
+            "Every US trading day 5 stocks are posted (20:30 Singapore in winter, 19:30 in summer). For each, call "
+            "whether it closes above or below its opening price, and how sure you are:\n"
+            "⏫ / ⏬ <b>Sure</b>: +5 right, −11 wrong (pays only if you're right 69%+ of the time)\n"
+            "⬆️ / ⬇️ <b>Lean</b>: +3 right, −4 wrong (pays if right 57%+)\n"
+            "No tap = <b>skip</b>: 0. Skipping when you have no edge is a smart move.\n"
+            "Tag what drove your picks (📰 📈 👥 🎲) and 🚀 name the biggest mover for +2.\n"
+            f"{esc(bot)} (our own AI) plays too, and its confidence is shown honestly.\n\n"
+            "Results come with the group's split, a 'Why did it move?' button and a daily lesson. Fridays: your "
+            "decision report. Weekends: a 5-question quiz.\n\n"
+            "/today · /board · /me · /report · /card · /bot · /league · /practice\n" + DISCLAIMER)
 
 
 class Game:
     def __init__(self, settings, store: Store, tg, quotes, news, call_ai, ai_ready, banter=None, call_mover=None,
-                 cards=None, log=print, clock=None):
+                 cards=None, log=print, clock=None, explain=None, teach=None):
         self.s, self.store, self.tg = settings, store, tg
         self.quotes, self.news, self.call_ai, self.ai_ready = quotes, news, call_ai, ai_ready
         self.banter, self.call_mover, self.log = banter, call_mover, log
+        self.explain, self.teach = explain, teach
         if cards is None:
             from . import cards as cards_module
             cards = cards_module
@@ -213,11 +260,11 @@ class Game:
     # ---------------------------------------------------------------- texts
     def round_text(self, day: dt.date, stocks: list[dict], voters: int = 0) -> str:
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
-                 "Will each stock <b>close above ⬆️ or below ⬇️ its opening price</b> today?",
-                 "🎯 <b>x2</b> = double down on your surest pick: +2 if right, −1 if wrong (one per day).",
-                 "🚀 <b>Bonus</b>: which one moves the MOST (up or down)? +2 if you name it.",
+                 "Will each stock <b>close above or below its opening price</b>, and how sure are you?",
+                 "⏫/⏬ <b>Sure</b> +5 / −11 · ⬆️/⬇️ <b>Lean</b> +3 / −4 · no tap = <b>skip</b> 0 · tap again to undo",
+                 "🚀 Biggest mover (either way): +2 · Last row: what drove your picks today?",
                  f"Picks lock at the open: 09:30 New York ({_sg(lock_at(day))} Singapore). "
-                 f"{esc(self.bot)} has already made its calls; they are revealed at the lock.", ""]
+                 f"{esc(self.bot)}'s calls are revealed at the lock.", ""]
         for i, s in enumerate(stocks, 1):
             lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])} · {_move(s)}")
             for h in s["headlines"][:2]:
@@ -230,31 +277,48 @@ class Game:
     @staticmethod
     def buttons(day: dt.date, stocks: list[dict]) -> list:
         key = day.strftime("%Y%m%d")
-        rows = [[(f"⬆️ {s['ticker']}", f"v|{key}|{s['ticker']}|U"), (f"⬇️ {s['ticker']}", f"v|{key}|{s['ticker']}|D"),
-                 ("🎯 x2", f"d|{key}|{s['ticker']}")] for s in stocks]
+        rows = [[(f"⏫ {s['ticker']}", f"v|{key}|{s['ticker']}|U|s"), ("⬆️", f"v|{key}|{s['ticker']}|U|l"),
+                 ("⬇️", f"v|{key}|{s['ticker']}|D|l"), (f"⏬ {s['ticker']}", f"v|{key}|{s['ticker']}|D|s")]
+                for s in stocks]
         rows.append([(f"🚀 {s['ticker']}", f"m|{key}|{s['ticker']}") for s in stocks])
+        rows.append([(label, f"r|{key}|{code}") for code, label in REASONS.items()])
         return rows
 
-    def lock_text(self, day: dt.date, stocks: list[dict], voters: int) -> str:
+    def split(self, key: str, chat_id: int | None) -> dict[str, dict[str, int]]:
+        """{ticker: {"UP": n, "DOWN": n}} among the group's human players."""
+        members = self.store.members(chat_id) if chat_id is not None else None
+        out: dict[str, dict[str, int]] = {}
+        for v in self.store.votes(key):
+            if v["user_id"] != BOT_ID and (members is None or v["user_id"] in members):
+                out.setdefault(v["ticker"], {"UP": 0, "DOWN": 0})[v["call"]] += 1
+        return out
+
+    def crowd(self, key: str, chat_id: int | None) -> dict[str, str]:
+        """The group's majority call per stock (ties: no call)."""
+        return {t: ("UP" if c["UP"] > c["DOWN"] else "DOWN") for t, c in self.split(key, chat_id).items()
+                if c["UP"] != c["DOWN"]}
+
+    def lock_text(self, day: dt.date, stocks: list[dict], voters: int, chat_id: int | None = None) -> str:
+        key = day.isoformat()
+        split = self.split(key, chat_id)
         lines = [f"🔒 <b>Picks locked</b> · {day:%a %d %b} · {voters} player{'s' if voters != 1 else ''}",
-                 f"{esc(self.bot)}'s calls:"]
-        doubled = None
+                 f"The group's split and {esc(self.bot)}'s calls:"]
         for s in stocks:
+            c = split.get(s["ticker"], {"UP": 0, "DOWN": 0})
+            crowd = f"⬆️ {c['UP']} · ⬇️ {c['DOWN']}"
             if s["ai_call"]:
-                lines.append(f"{ARROW[s['ai_call']]} <b>{esc(s['ticker'])}</b>: {esc(s['ai_reason'] or '(no comment)')}")
-                if s.get("ai_double"):
-                    doubled = s["ticker"]
+                conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
+                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · AI {icon(s['ai_call'], conf)} "
+                             f"{CONF_LABEL[conf]} ({(s['ai_conf'] or 0.5):.0%}): {esc(s['ai_reason'] or '(no comment)')}")
             else:
-                lines.append(f"💤 <b>{esc(s['ticker'])}</b>: {esc(self.bot)} sat this one out (model unavailable)")
-        if doubled:
-            lines.append(f"🎯 {esc(self.short)} doubles down on <b>{esc(doubled)}</b>.")
-        r = self.store.round(day.isoformat())
+                lines.append(f"<b>{esc(s['ticker'])}</b> group {crowd} · AI 💤 sat out (model unavailable)")
+        r = self.store.round(key)
         if r and r["ai_mover"]:
             lines.append(f"🚀 {esc(self.short)}'s biggest mover: <b>{esc(r['ai_mover'])}</b>"
                          + (f": {esc(r['ai_mover_reason'])}" if r["ai_mover_reason"] else ""))
         mid = at(day, MIDGAME)
         if mid <= close_at(day) - MIDGAME_LATEST:
-            lines.append(f"Halftime scores at {_sg(mid)} Singapore, results at {_sg(close_at(day) + SETTLE_DELAY)}.")
+            lines.append(f"Halftime at {_sg(mid)} Singapore, results at {_sg(close_at(day) + SETTLE_DELAY)}.")
         else:
             lines.append(f"Results at {_sg(close_at(day) + SETTLE_DELAY)} Singapore.")
         return "\n".join(lines)
@@ -264,14 +328,18 @@ class Game:
         stocks, votes = self.store.stocks(key), self.store.votes(key)
         members = self.store.members(chat_id) if chat_id is not None else None
         ours = (lambda uid: uid != BOT_ID and (members is None or uid in members))
+        crowd = self.crowd(key, chat_id)
         lines = [f"🏁 <b>Results</b> · {day:%a %d %b}"]
+        contrarians = []
         for s in stocks:
             if s["result"] in ("UP", "DOWN"):
                 mine = [v for v in votes if v["ticker"] == s["ticker"] and ours(v["user_id"])]
-                right = sum(v["call"] == s["result"] for v in mine)
-                bot = "" if not s["ai_call"] else (" · AI ✅" if s["ai_call"] == s["result"] else " · AI ❌")
+                right = [v for v in mine if v["call"] == s["result"]]
+                ai = "" if not s["ai_call"] else (" · AI ✅" if s["ai_call"] == s["result"] else " · AI ❌")
                 lines.append(f"{ARROW[s['result']]} <b>{esc(s['ticker'])}</b> {s['open']:.2f} → {s['close']:.2f} "
-                             f"({move_of(s):+.1%}) · {right}/{len(mine)} humans right{bot}")
+                             f"({move_of(s):+.1%}) · {len(right)}/{len(mine)} right{ai}")
+                if mine and 0 < len(right) <= len(mine) / 3:
+                    contrarians.append(f"{', '.join(esc(v['name']) for v in right)} on {esc(s['ticker'])}")
             else:
                 why = "closed flat" if s["result"] == "FLAT" else "price unavailable"
                 lines.append(f"➖ <b>{esc(s['ticker'])}</b>: no result ({why}), not scored")
@@ -285,6 +353,15 @@ class Game:
                          + (f" · +2 for {', '.join(got)}" if got else f" · {len(picks)} tried, nobody got it") + ai)
         elif r and r["mover"] == VOID:
             lines.append("🚀 Biggest mover: not scored today (a price was missing)")
+        scored = [s for s in stocks if s["result"] in ("UP", "DOWN")]
+        group_right = sum(crowd.get(s["ticker"]) == s["result"] for s in scored)
+        ai_right = sum(s["ai_call"] == s["result"] for s in scored if s["ai_call"])
+        if crowd:
+            verdict = ("the group wins 🧠" if group_right > ai_right else "AI wins 🤖" if ai_right > group_right
+                       else "draw 🤝")
+            lines.append(f"🧠 Group brain {group_right}/{len(scored)} vs {esc(self.short)} {ai_right}/{len(scored)}: {verdict}")
+        if contrarians:
+            lines.append("🦅 Against the crowd and right: " + "; ".join(contrarians))
         today = self.store.scores(key, key, chat_id)
         streaks = self.store.streaks()
         if today:
@@ -295,14 +372,37 @@ class Game:
                 beat = [esc(r["name"]) for r in humans if r["points"] > bot["points"]]
                 lines.append(f"🏆 Beat {esc(self.short)} today: " + ", ".join(beat) if beat
                              else f"🤖 Nobody beat {esc(self.short)} today.")
+        if r and r["lesson"]:
+            lines += ["", f"📚 <b>Lesson:</b> {esc(r['lesson'])}"]
         if banter:
             lines += ["", f"💬 <b>{esc(self.bot)}:</b> {esc(banter)}"]
         ws = week_start(day).isoformat()
         lines += ["", "<b>This week</b>", *board_lines(self.store.scores(ws, key, chat_id), streaks=streaks)]
         if last_of_week(day):
+            g, a, n = self.group_vs_ai(ws, key, chat_id)
+            if n:
+                lines.append(f"🧠 This week: group brain {g}/{n} vs {esc(self.short)} {a}/{n}")
             lines += ["", "<b>Titles of the week</b>", *self.titles(ws, key, chat_id)]
             lines += self.league_lines(ws, key, chat_id)
+        lines.append("Tap ❓ below: why did each stock move?")
         return "\n".join(lines)
+
+    def group_vs_ai(self, since: str, until: str, chat_id: int | None) -> tuple[int, int, int]:
+        g = a = n = 0
+        for row in self.store.db.execute("SELECT day FROM rounds WHERE status='settled' AND day BETWEEN ? AND ?",
+                                         (since, until)).fetchall():
+            crowd = self.crowd(row["day"], chat_id)
+            for s in self.store.stocks(row["day"]):
+                if s["result"] in ("UP", "DOWN") and s["ticker"] in crowd and s["ai_call"]:
+                    n += 1
+                    g += crowd[s["ticker"]] == s["result"]
+                    a += s["ai_call"] == s["result"]
+        return g, a, n
+
+    @staticmethod
+    def why_buttons(day: dt.date, stocks: list[dict]) -> list:
+        key = day.strftime("%Y%m%d")
+        return [[(f"❓ {s['ticker']}", f"w|{key}|{s['ticker']}") for s in stocks]]
 
     def titles(self, since: str, until: str, chat_id: int | None = None) -> list[str]:
         rows = self.store.scores(since, until, chat_id)
@@ -363,6 +463,7 @@ class Game:
                 and POST_AT <= ny.time() < LAST_POST):
             self.create(day, now)
         self.practice_reveal(now)
+        self.quiz_stage(now)
 
     def _due(self, what: str, key: str, ny: dt.datetime, gap: dt.timedelta = RETRY) -> bool:
         """Space out retries."""
@@ -409,6 +510,18 @@ class Game:
             self._tried[("post", f"{day.isoformat()}:{chat}")] = now.astimezone(NY)
             self.post(day, chat)
 
+    def refresh_open_rounds(self) -> None:
+        """On start: picks in a still-open round become Lean picks and its posts get the current text and buttons
+        (so a rules change applies to tonight's round, not tomorrow's)."""
+        for r in self.store.db.execute("SELECT day FROM rounds WHERE status='open'").fetchall():
+            self.store.db.execute("UPDATE votes SET conf='lean', double=0 WHERE day=? AND conf IS NULL", (r["day"],))
+            self.store.db.commit()
+            day, stocks = dt.date.fromisoformat(r["day"]), self.store.stocks(r["day"])
+            for chat in self.chat_ids():
+                mid = self.store.post_id(r["day"], chat)
+                if mid:
+                    self.edit(chat, mid, self.round_text(day, stocks, self.voters(r["day"], chat)), self.buttons(day, stocks))
+
     def post(self, day: dt.date, chat_id: int) -> None:
         key = day.isoformat()
         stocks = self.store.stocks(key)
@@ -447,13 +560,10 @@ class Game:
     def lock(self, day: dt.date) -> None:
         key = day.isoformat()
         stocks = self.store.stocks(key)
-        called = [s for s in stocks if s["ai_call"]]
-        best = max(called, key=lambda s: s["ai_conf"] or 0.0)["ticker"] if called else None
-        for s in called:
-            self.store.vote(key, s["ticker"], BOT_ID, s["ai_call"], lock_at(day).isoformat())
-        if best:
-            self.store.set_double(key, BOT_ID, best)
-            self.store.update_stock(key, best, ai_double=1)
+        for s in stocks:
+            if s["ai_call"]:
+                conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
+                self.store.vote(key, s["ticker"], BOT_ID, s["ai_call"], lock_at(day).isoformat(), conf)
         r = self.store.round(key)
         if r["ai_mover"]:
             self.store.set_bonus(key, BOT_ID, r["ai_mover"], lock_at(day).isoformat())
@@ -463,7 +573,7 @@ class Game:
             mid = self.store.post_id(key, chat)
             if mid:
                 self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)) + "\n🔒 <b>Locked.</b>", None)
-                self.send(chat, self.lock_text(day, stocks, self.voters(key, chat)))
+                self.send(chat, self.lock_text(day, stocks, self.voters(key, chat), chat))
 
     def capture_open(self, day: dt.date, ny: dt.datetime) -> None:
         key = day.isoformat()
@@ -514,7 +624,7 @@ class Game:
         totals: dict[int, list] = {}
         for v in self.store.votes(key):
             t = totals.setdefault(v["user_id"], [v["name"], 0])
-            t[1] += points(v["call"], now_result.get(v["ticker"]), v["double"])
+            t[1] += points(v["call"], now_result.get(v["ticker"]), v["double"], v.get("conf"))
         for b in self.store.bonus(key):
             t = totals.setdefault(b["user_id"], [b["name"], 0])
             t[1] += 2 if lead and b["pick"] == lead else 0
@@ -524,6 +634,11 @@ class Game:
             members = self.store.members(chat)
             mine = {uid: v for uid, v in totals.items() if uid == BOT_ID or uid in members}
             lines = list(head)
+            crowd = self.crowd(key, chat)
+            if crowd and now_result:
+                g = sum(crowd.get(t) == res for t, res in now_result.items() if res)
+                a = sum(s["ai_call"] == now_result.get(s["ticker"]) for s in stocks if s["ai_call"] and now_result.get(s["ticker"]))
+                lines.append(f"🧠 Group brain {g} vs {esc(self.short)} {a} so far")
             ranked = sorted(mine.items(), key=lambda kv: -kv[1][1])
             if ranked:
                 lines += ["", "<b>If it ended now</b>"] + [f"{esc(n)}: {pts(p)}" for _, (n, p) in ranked[:10]]
@@ -565,14 +680,49 @@ class Game:
         if not all(s["result"] is not None for s in stocks):
             return
         self.store.set_mover(key, biggest_mover(stocks))
+        self.explain_day(day, stocks)
         self.store.set_status(key, "settled")
         ws = week_start(day).isoformat()
         for i, chat in enumerate(self.chat_ids()):
             if not self.store.post_id(key, chat):
                 continue
-            self.send(chat, self.results_text(day, chat, self._banter(day, chat, model=i < BANTER_MODEL_GROUPS)))
+            self.send(chat, self.results_text(day, chat, self._banter(day, chat, model=i < BANTER_MODEL_GROUPS)),
+                      self.why_buttons(day, stocks))
             if last_of_week(day):
                 self.send_week_card(chat, ws, key)
+                report = self.group_report(chat, ws, key)
+                if report:
+                    self.send(chat, report)
+
+    def explain_day(self, day: dt.date, stocks: list[dict]) -> None:
+        """Once per day: why each stock moved (fresh headlines) and the lesson. Both have fallbacks."""
+        key = day.isoformat()
+        scored = [s for s in stocks if move_of(s) is not None]
+        why = {}
+        if self.explain and scored:
+            try:
+                rows = [{"ticker": s["ticker"], "name": s["name"], "move": move_of(s),
+                         "headlines": [h["title"] for h in self.news(s["ticker"], s["name"])]} for s in scored]
+                why = self.explain(rows) or {}
+            except Exception as e:
+                self.log(f"why failed: {e!r}"[:300])
+        for s in stocks:
+            text = why.get(s["ticker"]) or (
+                f"{s['ticker']} {move_of(s):+.1%} from the open, with no clear news behind it: probably market-wide "
+                "moves or noise. Most daily moves are." if move_of(s) is not None else "No price, so no result today.")
+            self.store.update_stock(key, s["ticker"], why=text)
+        lesson = None
+        if self.teach and scored:
+            split = self.split(key, None)
+            try:
+                lesson = self.teach({"stocks": [{"ticker": s["ticker"], "pre_market_move": pre_move(s),
+                                                 "open_to_close": round(move_of(s), 4),
+                                                 "group_up": split.get(s["ticker"], {}).get("UP", 0),
+                                                 "group_down": split.get(s["ticker"], {}).get("DOWN", 0)}
+                                                for s in scored]})
+            except Exception as e:
+                self.log(f"lesson failed: {e!r}"[:300])
+        self.store.set_round(key, lesson=lesson or fallback_lesson(stocks, self.split(key, None)))
 
     def _banter(self, day: dt.date, chat_id: int | None = None, model: bool = True) -> str:
         key = day.isoformat()
@@ -639,13 +789,47 @@ class Game:
         if chat_id is not None:
             self.store.player(user_id, name)
             self.store.member(chat_id, user_id)
+        if data.startswith("w|"):
+            return self.on_why(data)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
-        if data.startswith("d|"):
-            return self.on_double(data, user_id, name, now)
         if data.startswith("m|"):
             return self.on_mover(data, user_id, name, now)
+        if data.startswith("r|"):
+            return self.on_reason(data, user_id, name, now)
         return self.on_vote(data, user_id, name, now)
+
+    @staticmethod
+    def is_alert(data: str) -> bool:
+        """Answers shown as a pop-up the player must close (longer text)."""
+        return data.startswith("w|")
+
+    def on_why(self, data: str) -> str:
+        try:
+            _, d, ticker = data.split("|")
+            key = dt.datetime.strptime(d, "%Y%m%d").date().isoformat()
+        except ValueError:
+            return "Unknown button."
+        s = next((s for s in self.store.stocks(key) if s["ticker"] == ticker), None)
+        return (s and s.get("why")) or "No explanation for this one yet."
+
+    def on_reason(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
+        got, err = self._open_round(data + "|", now) if False else (None, "")
+        parts = data.split("|")
+        if len(parts) != 3 or parts[2] not in REASONS:
+            return "Unknown button."
+        try:
+            day = dt.datetime.strptime(parts[1], "%Y%m%d").date()
+        except ValueError:
+            return "Unknown button."
+        r = self.store.round(day.isoformat())
+        if r is None:
+            return "That round no longer exists."
+        if r["status"] != "open" or now >= lock_at(day):
+            return "Too late: picks are locked."
+        self.store.player(user_id, name)
+        self.store.set_reason(day.isoformat(), user_id, parts[2])
+        return f"Today's picks driven by {REASONS[parts[2]]}. Your Friday report shows which reasons work for you."
 
     def on_vote(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
         got, err = self._open_round(data, now)
@@ -653,26 +837,19 @@ class Game:
             return err
         day, key, ticker, parts = got
         c = parts[3] if len(parts) > 3 else ""
-        if c not in ("U", "D"):
+        conf = {"s": "sure", "l": "lean"}.get(parts[4] if len(parts) > 4 else "l")
+        if c not in ("U", "D") or not conf:
             return "Unknown button."
         call = "UP" if c == "U" else "DOWN"
         self.store.player(user_id, name)
-        self.store.vote(key, ticker, user_id, call, now.isoformat())
-        return f"{ticker} {ARROW[call]} saved. You can change it until the open."
-
-    def on_double(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
-        got, err = self._open_round(data, now)
-        if not got:
-            return err
-        day, key, ticker, _ = got
-        mine = {v["ticker"]: v for v in self.store.votes(key) if v["user_id"] == user_id}
-        if ticker not in mine:
-            return f"Pick ⬆️ or ⬇️ on {ticker} first, then double it."
-        if mine[ticker]["double"]:
-            self.store.set_double(key, user_id, None)
-            return f"Double down removed from {ticker}."
-        self.store.set_double(key, user_id, ticker)
-        return f"🎯 Doubled {ticker} {ARROW[mine[ticker]['call']]}: +2 if right, −1 if wrong."
+        mine = next((v for v in self.store.votes(key) if v["user_id"] == user_id and v["ticker"] == ticker), None)
+        if mine and mine["call"] == call and mine.get("conf") == conf:
+            self.store.unvote(key, ticker, user_id)
+            return f"{ticker}: pick removed (skip, 0 points)."
+        self.store.vote(key, ticker, user_id, call, now.isoformat(), conf)
+        win, lose = CONF[conf]
+        return (f"{ticker} {icon(call, conf)} {CONF_LABEL[conf]} {'up' if call == 'UP' else 'down'}: "
+                f"+{win} if right, {lose} if wrong. Tap again to undo.")
 
     def on_mover(self, data: str, user_id: int, name: str, now: dt.datetime) -> str:
         got, err = self._open_round(data, now)
@@ -706,8 +883,8 @@ class Game:
             if r["status"] == "open":
                 return self.round_text(day, stocks, self.voters(row["day"], chat_id)), self.buttons(day, stocks)
             if r["status"] == "locked":
-                return self.lock_text(day, stocks, self.voters(row["day"], chat_id)), None
-            return self.results_text(day, chat_id), None
+                return self.lock_text(day, stocks, self.voters(row["day"], chat_id), chat_id), None
+            return self.results_text(day, chat_id), self.why_buttons(day, stocks)
         if cmd == "/board":
             today, streaks = ny.date(), self.store.streaks()
             last_week = week_start(today) - dt.timedelta(days=7)
@@ -730,11 +907,24 @@ class Game:
                     f"({mine['correct'] / mine['played']:.0%}) · 🔥 {streak} in a row · 🚀 {won}/{tried} movers{vs}"), None
         if cmd == "/bot":
             return self.bot_text(), None
+        if cmd == "/report":
+            lines = self.report_lines(user_id)
+            if not lines:
+                return (f"{esc(name)}: no settled confidence picks yet. Play a round with ⏫ ⬆️ ⬇️ ⏬ "
+                        "and your report builds up."), None
+            return f"📊 <b>{esc(name)}'s decision report (all time)</b>\n" + "\n".join(lines), None
         if cmd == "/card":
             return self.personal_card(user_id, name, ny.date())
         if cmd == "/league":
             return self.league_command(arg, chat_id, ny.date()), None
         return None
+
+    def calibration(self, user_id: int, since: str = "", until: str = "9999") -> dict[str, tuple[int, int]]:
+        out = {"sure": [0, 0], "lean": [0, 0]}
+        for d in self.store.decisions(user_id, since, until):
+            out[d["conf"]][0] += d["call"] == d["result"]
+            out[d["conf"]][1] += 1
+        return {k: tuple(v) for k, v in out.items()}
 
     def bot_text(self) -> str:
         rows = self.store.scores()
@@ -745,12 +935,16 @@ class Game:
         beaten = sum(r["points"] > me["points"] for r in humans)
         won, tried = self.store.mover_record(BOT_ID)
         calls = self.store.calls(BOT_ID)
+        cal = self.calibration(BOT_ID)
         wrong = sorted((c for c in calls if c["call"] != c["result"]), key=lambda c: -abs(move_of(c)))[:3]
         right = sorted((c for c in calls if c["call"] == c["result"]), key=lambda c: -abs(move_of(c)))[:1]
-        lines = [f"🤖 <b>{esc(self.bot)}'s record</b>",
+        lines = [f"🤖 <b>{esc(self.short)}'s record</b>",
                  f"{pts(me['points'])} · {me['correct']}/{me['played']} calls right ({me['correct'] / me['played']:.0%}) "
                  f"· 🔥 {self.store.streaks().get(BOT_ID, 0)} in a row · 🚀 {won}/{tried} movers",
-                 f"Humans ahead of it all-time: {beaten} of {len(humans)}"]
+                 f"When it said <b>Sure</b>: {pct(*cal['sure'])} right (needs 69% to pay)",
+                 f"When it said <b>Lean</b>: {pct(*cal['lean'])} right (needs 57%)",
+                 f"Humans ahead of it all-time: {beaten} of {len(humans)}",
+                 "<i>Lesson: a confident voice isn't evidence. Check any tipster's record, AI or human.</i>"]
         if wrong:
             lines += ["", "<b>Hall of shame</b>"]
             for c in wrong:
@@ -761,6 +955,51 @@ class Game:
             lines += ["", f"<b>Best call</b>\n✅ {esc(c['ticker'])} {ARROW[c['call']]} on "
                           f"{dt.date.fromisoformat(c['day']):%d %b}, went {move_of(c):+.1%}"]
         return "\n".join(lines)
+
+    def report_lines(self, user_id: int, since: str = "", until: str = "9999") -> list[str]:
+        """A player's decision habits over [since, until]: confidence vs results, reasons, skips."""
+        cal = self.calibration(user_id, since, until)
+        ds = self.store.decisions(user_id, since, until)
+        if not ds:
+            return []
+        out = []
+        k, n = cal["sure"]
+        if n:
+            verdict = ("✅ your Sure picks paid" if k / n >= 11 / 16 else
+                       "⚠️ overconfident: Sure needs 69%; use Lean or skip more")
+            out.append(f"Sure: {pct(k, n)} · {verdict}")
+        k, n = cal["lean"]
+        if n:
+            out.append(f"Lean: {pct(k, n)} · " + ("✅ above the 57% it needs" if k / n >= 4 / 7 else
+                                                   "⚠️ below the 57% it needs: skip when unsure"))
+        by: dict[str, list[int]] = {}
+        for d in ds:
+            if d["reason"]:
+                b = by.setdefault(d["reason"], [0, 0])
+                b[0] += d["call"] == d["result"]
+                b[1] += 1
+        if by:
+            parts = [f"{REASONS[r].split()[0]} {pct(*v)}" for r, v in sorted(by.items(), key=lambda kv: -kv[1][0] / kv[1][1])]
+            out.append("By reason: " + " · ".join(parts))
+        skips = len(self.store.skipped(user_id, since, until))
+        if skips:
+            out.append(f"Skipped {skips} stock{'s' if skips != 1 else ''} (0 points each: fine when you had no edge)")
+        return out
+
+    def group_report(self, chat_id: int, since: str, until: str) -> str:
+        members = sorted(self.store.members(chat_id))
+        blocks = []
+        for uid in members:
+            if len(self.store.decisions(uid, since, until)) < 3:
+                continue
+            name = self.store.db.execute("SELECT name FROM players WHERE user_id=?", (uid,)).fetchone()
+            lines = self.report_lines(uid, since, until)
+            if lines and name:
+                blocks.append(f"<b>{esc(name['name'])}</b>\n" + "\n".join(lines))
+        if not blocks:
+            return ""
+        return ("📊 <b>Decision report: this week</b>\nGood deciders are right as often as they are sure.\n\n"
+                + "\n\n".join(blocks) + "\n\n/report anytime for your all-time report.")
 
     def personal_card(self, user_id: int, name: str, today: dt.date):
         since, until = week_start(today).isoformat(), today.isoformat()
@@ -906,4 +1145,61 @@ class Game:
         if any(s["ai_call"] for s in p["stocks"]):
             lines.append(f"{esc(self.bot)}: {bot_right}/{n}")
         lines.append("The real round posts every US trading day at 20:30 Singapore (19:30 in summer).")
+        return "\n".join(lines)
+
+    # ---------------------------------------------------------------- weekend quiz
+    def quiz_stage(self, now: dt.datetime) -> None:
+        from . import quiz
+        sg = now.astimezone(SG)
+        saturday = sg.date() - dt.timedelta(days=(sg.weekday() - 5) % 7)
+        week = quiz.week_key(saturday)
+        post_at = dt.datetime.combine(saturday, QUIZ_POST[1], tzinfo=SG)
+        results_at = dt.datetime.combine(saturday + dt.timedelta(days=1), QUIZ_RESULTS[1], tzinfo=SG)
+        if not (post_at <= sg < results_at + dt.timedelta(hours=12)):
+            return
+        for chat in self.chat_ids():
+            if sg < results_at and not self.store.get(f"quiz:{week}:{chat}"):
+                self.post_quiz(chat, week, saturday)
+            elif sg >= results_at and self.store.get(f"quiz:{week}:{chat}") == "posted":
+                self.store.set(f"quiz:{week}:{chat}", "scored")
+                self.send(chat, self.quiz_results(chat, week))
+
+    def post_quiz(self, chat_id: int, week: str, saturday: dt.date) -> None:
+        from . import quiz
+        self.store.set(f"quiz:{week}:{chat_id}", "posted")
+        qs = [quiz.BANK[i] for i in quiz.pick(week)]
+        since = (saturday - dt.timedelta(days=5)).isoformat()
+        moves = [(s["day"], s["ticker"], move_of(s)) for r in self.store.db.execute(
+                     "SELECT day FROM rounds WHERE status='settled' AND day BETWEEN ? AND ?",
+                     (since, saturday.isoformat())).fetchall()
+                 for s in self.store.stocks(r["day"]) if move_of(s) is not None]
+        game_q = quiz.game_question(moves)
+        if game_q:
+            qs.append(game_q)
+        self.send(chat_id, f"🧩 <b>Weekend quiz</b>: {len(qs)} questions on money and decisions. Tap an answer to see "
+                           "if you're right and why. Scores on Sunday at 20:00.")
+        for i, (question, options, right, explain) in enumerate(qs):
+            try:
+                poll_id = self.tg.send_poll(question, options, right, explain, chat_id=chat_id)
+            except Exception as e:
+                self.log(f"quiz poll failed: {e!r}"[:300])
+                continue
+            if poll_id:
+                self.store.add_quiz(poll_id, chat_id, week, i, right)
+
+    def on_quiz_answer(self, poll_id: str, user_id: int, name: str, choice: int) -> None:
+        self.store.player(user_id, name)
+        if self.store.quiz_answer(poll_id, user_id, choice):
+            row = self.store.db.execute("SELECT chat_id FROM quiz WHERE poll_id=?", (poll_id,)).fetchone()
+            self.store.member(row["chat_id"], user_id)
+
+    def quiz_results(self, chat_id: int, week: str) -> str:
+        rows = self.store.quiz_scores(chat_id, week)
+        if not rows:
+            return "🧩 Nobody tried this weekend's quiz. Next one on Saturday at 10:00!"
+        medals = ["🥇", "🥈", "🥉"]
+        lines = ["🧩 <b>Weekend quiz results</b>"]
+        lines += [f"{medals[i] if i < 3 else f'{i + 1}.'} {esc(r['name'])}: {r['ok']}/{r['answered']}"
+                  for i, r in enumerate(rows[:10])]
+        lines.append("New round of the game tomorrow evening. Good luck!")
         return "\n".join(lines)

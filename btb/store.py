@@ -31,17 +31,32 @@ CREATE TABLE IF NOT EXISTS members (chat_id INTEGER NOT NULL, user_id INTEGER NO
     PRIMARY KEY (chat_id, user_id));
 CREATE TABLE IF NOT EXISTS posts (day TEXT NOT NULL, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
     PRIMARY KEY (day, chat_id));
+CREATE TABLE IF NOT EXISTS reasons (day TEXT NOT NULL, user_id INTEGER NOT NULL, reason TEXT NOT NULL,
+    PRIMARY KEY (day, user_id));
+CREATE TABLE IF NOT EXISTS quiz (poll_id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, week TEXT NOT NULL,
+    idx INTEGER NOT NULL, correct INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS quiz_answers (poll_id TEXT NOT NULL, user_id INTEGER NOT NULL, choice INTEGER NOT NULL,
+    PRIMARY KEY (poll_id, user_id));
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 # Columns added after the first release, for databases created before them.
 MIGRATIONS = [("stocks", "ai_conf", "REAL"), ("stocks", "ai_double", "INTEGER NOT NULL DEFAULT 0"),
               ("votes", "double", "INTEGER NOT NULL DEFAULT 0"), ("rounds", "mover", "TEXT"),
-              ("rounds", "ai_mover", "TEXT"), ("rounds", "ai_mover_reason", "TEXT NOT NULL DEFAULT ''")]
+              ("rounds", "ai_mover", "TEXT"), ("rounds", "ai_mover_reason", "TEXT NOT NULL DEFAULT ''"),
+              ("votes", "conf", "TEXT"), ("stocks", "why", "TEXT"), ("rounds", "lesson", "TEXT")]
 
-# Points per pick, shared by every score query: doubles are +2/-1, a right biggest-mover bonus is +2.
+# Confidence picks: (points if right, points if wrong). The costs make "sure" pay only when you are right more
+# than 11/16 = 69% of the time, and "lean" more than 4/7 = 57%: overconfidence loses, an honest skip scores 0.
+CONF = {"lean": (3, -4), "sure": (5, -11)}
+
+# Points per pick, shared by every score query: confidence picks per CONF (older rounds: 1 per right call, doubles
+# +2/-1), a right biggest-mover bonus +2.
 POINTS = """
 WITH pts AS (
-  SELECT v.day, v.user_id, CASE WHEN v.call = s.result THEN 1 + v.double ELSE -v.double END AS p,
+  SELECT v.day, v.user_id,
+         CASE WHEN v.conf = 'sure' THEN (CASE WHEN v.call = s.result THEN 5 ELSE -11 END)
+              WHEN v.conf = 'lean' THEN (CASE WHEN v.call = s.result THEN 3 ELSE -4 END)
+              WHEN v.call = s.result THEN 1 + v.double ELSE -v.double END AS p,
          (v.call = s.result) AS c, 1 AS n
   FROM votes v JOIN stocks s ON s.day = v.day AND s.ticker = v.ticker WHERE s.result IN ('UP', 'DOWN')
   UNION ALL
@@ -148,6 +163,11 @@ class Store:
         self.db.execute("UPDATE rounds SET status=? WHERE day=?", (status, day))
         self.db.commit()
 
+    def set_round(self, day: str, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE rounds SET {cols} WHERE day=?", (*fields.values(), day))
+        self.db.commit()
+
     def set_mover(self, day: str, mover: str) -> None:
         self.db.execute("UPDATE rounds SET mover=? WHERE day=?", (mover, day))
         self.db.commit()
@@ -163,11 +183,60 @@ class Store:
                         (user_id, name[:40]))
         self.db.commit()
 
-    def vote(self, day: str, ticker: str, user_id: int, call: str, at: str) -> None:
-        self.db.execute("INSERT INTO votes (day, ticker, user_id, call, at) VALUES (?,?,?,?,?) "
-                        "ON CONFLICT(day, ticker, user_id) DO UPDATE SET call=excluded.call, at=excluded.at",
-                        (day, ticker, user_id, call, at))
+    def vote(self, day: str, ticker: str, user_id: int, call: str, at: str, conf: str | None = None) -> None:
+        self.db.execute("INSERT INTO votes (day, ticker, user_id, call, at, conf) VALUES (?,?,?,?,?,?) "
+                        "ON CONFLICT(day, ticker, user_id) DO UPDATE SET call=excluded.call, at=excluded.at, "
+                        "conf=excluded.conf", (day, ticker, user_id, call, at, conf))
         self.db.commit()
+
+    def unvote(self, day: str, ticker: str, user_id: int) -> None:
+        self.db.execute("DELETE FROM votes WHERE day=? AND ticker=? AND user_id=?", (day, ticker, user_id))
+        self.db.commit()
+
+    def set_reason(self, day: str, user_id: int, reason: str) -> None:
+        self.db.execute("INSERT INTO reasons VALUES (?,?,?) ON CONFLICT(day, user_id) DO UPDATE SET reason=excluded.reason",
+                        (day, user_id, reason))
+        self.db.commit()
+
+    def reason(self, day: str, user_id: int) -> str | None:
+        r = self.db.execute("SELECT reason FROM reasons WHERE day=? AND user_id=?", (day, user_id)).fetchone()
+        return r["reason"] if r else None
+
+    def decisions(self, user_id: int, since: str = "", until: str = "9999") -> list[dict]:
+        """Settled confidence picks of a player with the day's reason tag."""
+        return [dict(r) for r in self.db.execute(
+            "SELECT v.day, v.ticker, v.call, v.conf, s.result, r.reason FROM votes v "
+            "JOIN stocks s ON s.day=v.day AND s.ticker=v.ticker "
+            "LEFT JOIN reasons r ON r.day=v.day AND r.user_id=v.user_id "
+            "WHERE v.user_id=? AND v.conf IS NOT NULL AND s.result IN ('UP','DOWN') AND v.day BETWEEN ? AND ? "
+            "ORDER BY v.day", (user_id, since, until))]
+
+    def skipped(self, user_id: int, since: str = "", until: str = "9999") -> list[dict]:
+        """Settled stocks of days the player played (any pick) but left this stock unpicked."""
+        return [dict(r) for r in self.db.execute(
+            "SELECT s.day, s.ticker, s.result FROM stocks s WHERE s.result IN ('UP','DOWN') AND s.day BETWEEN ? AND ? "
+            "AND EXISTS (SELECT 1 FROM votes v WHERE v.day=s.day AND v.user_id=? AND v.conf IS NOT NULL) "
+            "AND NOT EXISTS (SELECT 1 FROM votes v WHERE v.day=s.day AND v.ticker=s.ticker AND v.user_id=?)",
+            (since, until, user_id, user_id))]
+
+    def add_quiz(self, poll_id: str, chat_id: int, week: str, idx: int, correct: int) -> None:
+        self.db.execute("INSERT OR REPLACE INTO quiz VALUES (?,?,?,?,?)", (poll_id, chat_id, week, idx, correct))
+        self.db.commit()
+
+    def quiz_answer(self, poll_id: str, user_id: int, choice: int) -> bool:
+        """First answer counts (quiz polls can't be changed anyway). False for unknown polls."""
+        if not self.db.execute("SELECT 1 FROM quiz WHERE poll_id=?", (poll_id,)).fetchone():
+            return False
+        self.db.execute("INSERT OR IGNORE INTO quiz_answers VALUES (?,?,?)", (poll_id, user_id, choice))
+        self.db.commit()
+        return True
+
+    def quiz_scores(self, chat_id: int, week: str) -> list[dict]:
+        return [dict(r) for r in self.db.execute(
+            "SELECT a.user_id, p.name, SUM(a.choice = q.correct) AS ok, COUNT(*) AS answered FROM quiz q "
+            "JOIN quiz_answers a USING (poll_id) JOIN players p ON p.user_id=a.user_id "
+            "WHERE q.chat_id=? AND q.week=? GROUP BY a.user_id ORDER BY ok DESC, answered ASC, p.name",
+            (chat_id, week))]
 
     def set_double(self, day: str, user_id: int, ticker: str | None) -> None:
         """At most one doubled pick per player per day; None clears it."""
@@ -216,7 +285,7 @@ class Store:
     def calls(self, user_id: int) -> list[dict]:
         """Settled calls of one player, newest first, with the stock's move."""
         return [dict(r) for r in self.db.execute(
-            "SELECT v.day, v.ticker, v.call, v.double, s.result, s.open, s.close, s.ai_reason "
+            "SELECT v.day, v.ticker, v.call, v.double, v.conf, s.result, s.open, s.close, s.ai_reason "
             "FROM votes v JOIN stocks s ON s.day=v.day AND s.ticker=v.ticker "
             "WHERE v.user_id=? AND s.result IN ('UP','DOWN') ORDER BY v.day DESC, s.pos", (user_id,))]
 

@@ -21,7 +21,8 @@ def make_game(s: Settings, store: Store, tg, clock=None) -> Game:
     return Game(s, store, tg, quotes=market.Quotes(s), news=news.headlines,
                 call_ai=lambda t, name, q, h: glm.call_stock(s, t, name, q, h),
                 ai_ready=lambda: glm.healthy(s), banter=lambda summary: glm.banter(s, summary),
-                call_mover=lambda stocks: glm.call_mover(s, stocks), clock=clock)
+                call_mover=lambda stocks: glm.call_mover(s, stocks), clock=clock,
+                explain=lambda rows: glm.why(s, rows), teach=lambda summary: glm.lesson(s, summary))
 
 
 GROUPS = ("group", "supergroup")
@@ -48,6 +49,11 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
             elif status in ("left", "kicked"):
                 game.store.deactivate(int(chat["id"]))
         return
+    if pa := u.get("poll_answer"):
+        user = pa.get("user") or {}
+        if user.get("id") and pa.get("option_ids"):
+            game.on_quiz_answer(str(pa.get("poll_id")), int(user["id"]), display_name(user), int(pa["option_ids"][0]))
+        return
     if cq := u.get("callback_query"):
         chat = (cq.get("message") or {}).get("chat") or {}
         user = cq.get("from") or {}
@@ -55,8 +61,9 @@ def handle(game: Game, tg, u: dict, now: dt.datetime) -> None:
         if chat.get("type") not in GROUPS or not c or not c["active"]:
             tg.answer(cq["id"], "This game is played in its Telegram group.")
             return
-        tg.answer(cq["id"], game.on_button(cq.get("data", ""), int(user.get("id", -1)), display_name(user), now,
-                                           chat_id=int(chat["id"])))
+        data = cq.get("data", "")
+        tg.answer(cq["id"], game.on_button(data, int(user.get("id", -1)), display_name(user), now,
+                                           chat_id=int(chat["id"])), alert=game.is_alert(data))
         return
     m = u.get("message") or {}
     chat = m.get("chat") or {}
@@ -107,6 +114,10 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
     store, tg = Store(s.db_path, s.bot_name, home_chat=s.chat_id or None), Telegram(s.telegram_token, s.chat_id)
     game = make_game(s, store, tg)
     game.log = log
+    try:
+        game.refresh_open_rounds()
+    except Exception as e:
+        log(f"refresh of open rounds failed: {e!r}"[:300])
     try:
         from .game import COMMANDS
         log("command menu registered" if tg.set_commands(COMMANDS) else "command menu NOT registered")

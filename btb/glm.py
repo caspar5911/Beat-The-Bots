@@ -14,8 +14,11 @@ Predict whether TODAY's regular-session CLOSE will be ABOVE (UP) or BELOW (DOWN)
 Note: the opening gap is already priced in at the open; you are calling the move from open to close.
 Be balanced: roughly half of open-to-close moves are DOWN. Gaps fade about as often as they run, so call
 DOWN whenever the evidence leans that way; never default to UP. Use only the data given; never invent news.
+Give an HONEST confidence (0.5 to 1.0) that your call is right; your record is shown to the players, so
+overconfidence will be exposed. Open-to-close direction is close to a coin flip: most calls deserve 0.5-0.6,
+and 0.7+ only with a clear, specific reason.
 Keep the reason to one short, punchy sentence (light trash talk at the humans is welcome, nothing rude).
-Answer with ONE JSON object and nothing else: {"call":"UP|DOWN","confidence":0.5,"reason":"..."}"""
+Answer with ONE JSON object and nothing else: {"call":"UP|DOWN","confidence":0.55,"reason":"..."}"""
 
 
 def healthy(s: Settings, session=None) -> bool:
@@ -140,3 +143,49 @@ def call_mover(s: Settings, stocks: list[dict], session=None, timeout: float = 1
     if ticker not in {st["ticker"] for st in stocks}:
         return None
     return ticker, str(data.get("reason", "")).strip()[:200]
+
+
+LESSON = """You write ONE short daily lesson for a group game where friends call whether stocks close above or below
+their open. You get today's stocks (pre-market move, open-to-close move, the group's split) as JSON.
+Teach a decision-making habit (base rates, priced-in news, crowd vs individual, calibration, process vs outcome,
+noise vs signal) using today's data. Max 2 sentences, plain words, no jargon, no advice on what to buy or sell.
+Plain text only."""
+
+WHY = """For each stock below you get its open-to-close move today and today's headlines. In at most 170 characters
+per stock, explain the most likely driver of the move using only these headlines. If none explains it, say it was
+probably market-wide moves or noise. No predictions, no advice. Answer with ONE JSON object mapping ticker to text."""
+
+
+def _text(s: Settings, system: str, user: str, session=None, timeout: float = 120, json_mode: bool = False):
+    body = {"model": s.glm_model, "reasoning_effort": "low", "max_tokens": 1500, "temperature": 0.4,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    try:
+        r = (session or requests).post(f"{s.glm_base_url.rstrip('/')}/chat/completions", json=body,
+                                       headers=_headers(s), timeout=timeout)
+        r.raise_for_status()
+        return (r.json()["choices"][0]["message"].get("content") or "").strip()
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def lesson(s: Settings, summary: dict, session=None) -> str | None:
+    text = _text(s, LESSON, json.dumps(summary, default=str), session)
+    return text.strip('"')[:320] if text else None
+
+
+def why(s: Settings, stocks: list[dict], session=None) -> dict[str, str]:
+    """{ticker: short explanation of today's move}; empty when the model is unavailable."""
+    lines = []
+    for st in stocks:
+        lines.append(f"{st['ticker']} ({st['name']}): {st['move']:+.1%} open to close")
+        lines += [f"- {h}" for h in st.get("headlines", [])[:6]] or ["- (no headlines)"]
+    text = _text(s, WHY, "\n".join(lines), session, json_mode=True)
+    try:
+        data = json.loads((text or "").removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k).upper(): str(v)[:180] for k, v in data.items() if isinstance(v, str)}

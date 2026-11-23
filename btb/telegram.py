@@ -104,12 +104,24 @@ class Telegram:
             params["reply_markup"] = keyboard(buttons)
         self.call("editMessageText", **params)
 
-    def answer(self, callback_id: str, text: str) -> None:
-        self.call("answerCallbackQuery", callback_query_id=callback_id, text=text[:200])
+    def answer(self, callback_id: str, text: str, alert: bool = False) -> None:
+        self.call("answerCallbackQuery", callback_query_id=callback_id, text=text[:200], show_alert=alert)
+
+    def send_poll(self, question: str, options: list[str], correct: int, explanation: str = "",
+                  chat_id: str | None = None) -> str | None:
+        """A non-anonymous quiz poll (answers arrive as poll_answer updates); returns the poll id."""
+        res = self.call("sendPoll", chat_id=chat_id or self.chat_id, question=question[:300],
+                        options=[{"text": o[:100]} for o in options], type="quiz", is_anonymous=False,
+                        correct_option_id=correct, explanation=explanation[:200], disable_notification=True)
+        if res.get("error_code") == 403:
+            raise Forbidden(res.get("description", ""))
+        if not res.get("ok"):
+            raise RuntimeError(f"Telegram refused the poll: {res.get('description', 'no answer')}"[:300])
+        return ((res.get("result") or {}).get("poll") or {}).get("id")
 
     def updates(self, offset: int, timeout: int = 25) -> list[dict]:
         r = self.http.get(f"{self.api}/getUpdates", timeout=timeout + 15,
                           params={"timeout": timeout, "offset": offset,
-                                  "allowed_updates": '["message","callback_query","my_chat_member"]'})
+                                  "allowed_updates": '["message","callback_query","my_chat_member","poll_answer"]'})
         data = r.json()
         return data.get("result", []) if data.get("ok") else []

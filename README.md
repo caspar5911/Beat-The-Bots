@@ -4,25 +4,39 @@ A daily stock game for a Telegram group: every US trading day, players call whet
 **close above or below their opening price**, and an AI (your own self-hosted model) plays against them.
 Just a game: no money, not investment advice.
 
-## How a day goes (New York time)
+## The idea
+
+A game about **deciding under uncertainty**, not about guessing. Whether a stock closes above its open is close to a
+coin flip, so the skill is knowing how sure to be: confident when you have an edge, cautious or skipping when you
+don't. Scores reward honest confidence, and the reports show players their own habits.
+
+## How a day goes (New York time; Singapore is +13h in winter)
 
 | When | What happens |
 |---|---|
-| 07:30 | Round posted in every group: 3 of the day's biggest pre-market movers + 2 random stocks, pre-market move, two fresh headlines each, ⬆️ / ⬇️ / 🎯 x2 buttons and the 🚀 biggest-mover bonus. The AI makes its calls, hidden. |
+| 07:30 | Round posted in every group: 3 of the day's biggest pre-market movers + 2 random stocks, pre-market move, two headlines each. Buttons per stock: ⏫ Sure up · ⬆️ Lean up · ⬇️ Lean down · ⏬ Sure down; a 🚀 biggest-mover row; a reason row (📰 News · 📈 Trend · 👥 Friends · 🎲 Gut). The AI makes its calls with an honest confidence, hidden. |
 | 09:20 | Reminder tagging regular players who still have picks to make. |
-| until 09:30 | Players tap their calls (changeable). Votes are judged by the time the server receives them. |
-| 09:30 | Picks lock; the AI's calls, one-line trash talk and its double-down are revealed. |
-| 09:35+ | Opening prices captured. |
-| 11:00 | Halftime: live standings from current prices. |
-| close + 10 min | Results, streaks, the AI's banter about named players, weekly leaderboard; on the week's last trading day: titles, the league table and a leaderboard image. |
+| 09:30 | Picks lock: the group's split per stock and the AI's calls, confidence and reasons are revealed. |
+| 11:00 | Halftime: live standings, group brain vs the AI. |
+| close + 10 min | Results: the split, who was right against the crowd (🦅), group brain vs the AI, a daily 📚 lesson, ❓ "why did it move" buttons, the AI's banter. On the week's last trading day: titles, league, leaderboard image and a 📊 decision report per player. |
+| Sat 10:00 SGT | Weekend quiz: 5 Telegram quiz questions on money basics and decision habits (instant explanations). Scores Sunday 20:00 SGT. |
 
-Scoring: 1 point per correct call. **🚀 Bonus**: +2 for naming the stock with the biggest open-to-close move
-(either way; not scored if any price is missing). **Double down** (🎯 x2) on one pick a day: +2 if right, −1 if wrong; the AI
-doubles its most confident call. 🔥 marks a run of 3+ correct calls. Weekly titles: 👑 Bot Slayer (top human, if
-they beat the AI) and 🤡 the AI's Snack (bottom human, 3+ picks).
+## Scoring
 
-Commands in the group: `/today`, `/board`, `/me`, `/help`, plus:
-- `/bot`: the AI's record, its hall of shame (worst calls) and best call
+| Pick | Right | Wrong | Pays when you're right more than |
+|---|---|---|---|
+| ⏫/⏬ Sure | +5 | −11 | 69% |
+| ⬆️/⬇️ Lean | +3 | −4 | 57% |
+| no tap (skip) | 0 | 0 | |
+
+Tap a pick again to undo it. 🚀 Naming the stock with the biggest open-to-close move (either way) is +2. 🔥 marks
+3+ correct calls in a row. Weekly titles: 👑 Bot Slayer and 🤡 the AI's Snack.
+
+## Commands
+
+`/today`, `/board`, `/me`, `/help`, plus:
+- `/report`: your decision report: how often your Sure and Lean picks are right, which reasons work, skips
+- `/bot`: the AI's record and calibration, its hall of shame and best call
 - `/card`: your weekly scorecard as an image, to share
 - `/league`, `/league join`, `/league leave`: groups vs groups by average points per player (opt-in: joining shows
   the group's name to the other groups)
@@ -30,12 +44,12 @@ Commands in the group: `/today`, `/board`, `/me`, `/help`, plus:
 
 **Any group can play**: add the bot to a group and it joins (up to `BTB_MAX_GROUPS`, default 20). All groups get
 the same daily stocks and AI calls; each has its own post, reminders and leaderboard, and a player's picks count
-in every group they play in. Names are set in `.env` (`BTB_GAME_NAME`,
-`BTB_BOT_NAME`; defaults "Huat or Not?" and "🤖 Ah Huat").
+in every group they play in.
 
-The round still runs if the model is down (the Bot sits out), and a missed stage is caught up after a restart.
-A stock whose open or close cannot be confirmed from quotes, or that closes exactly flat, is not scored.
-NYSE holidays and half-days are listed for 2026-2027 in `btb/market.py`.
+The round still runs if the model is down (the AI sits out; lessons and explanations fall back to templates), and a
+missed stage is caught up after a restart. A stock whose open or close cannot be confirmed from quotes, or that
+closes exactly flat, is not scored. NYSE holidays and half-days are listed for 2026-2027 in `btb/market.py`.
+Names are set in `.env` (`BTB_GAME_NAME`, `BTB_BOT_NAME`; defaults "Huat or Not?" and "🤖 Ah Huat").
 
 ## Quick setup
 
