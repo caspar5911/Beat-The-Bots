@@ -1043,3 +1043,18 @@ def test_my_picks_popup_and_toast():
     settle_day(game, q, ts, DAY, [101.0, 99.0, 101.0])
     pop = game.on_button(mine, 7, "Ann", ny(DAY, 17))
     assert f"{ts[0]} ⬆️ think so ✅ 3 pts" in pop and f"{ts[1]} ⏬ very sure ✅ 5 pts" in pop and "Change" not in pop
+
+
+
+def test_stocks_come_from_different_industries():
+    q = {t: {"pre_price": 100.5, "prev_close": 100.0} for t in g.POOL}
+    for t, p in (("AVGO", 90.0), ("MU", 91.0), ("AMD", 92.0), ("GOOGL", 103.0), ("META", 97.5)):
+        q[t]["pre_price"] = p                                   # tonight: chips and internet move most
+    picks = g.pick_stocks(DAY, 5, q)
+    assert len({g.SECTOR[t] for t in picks}) == 5
+    assert "AVGO" in picks and "MU" not in picks and "AMD" not in picks   # only the biggest chip mover
+    assert "GOOGL" in picks
+    for d in range(60):                                        # any day, with or without prices
+        day = DAY + dt.timedelta(days=d)
+        assert len({g.SECTOR[t] for t in g.pick_tickers(day, 5)}) == 5
+    assert set(g.POOL) == set(g.SECTOR) and len(g.POOL) == len(set(g.POOL))

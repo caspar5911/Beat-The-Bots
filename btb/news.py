@@ -62,7 +62,8 @@ def dedupe_recent(items: list[dict], now: dt.datetime, hours: int = 36, limit: i
 GENERIC = {"the", "inc", "corp", "group", "holdings", "company", "and", "co"}
 # Company names whose first word is too generic to find or filter headlines with.
 KEYWORDS = {"AMD": ["Advanced Micro"], "SMCI": ["Super Micro", "Supermicro"], "KO": ["Coca-Cola"],
-            "ARM": ["Arm Holdings"], "LLY": ["Eli Lilly", "Lilly"]}
+            "ARM": ["Arm Holdings"], "LLY": ["Eli Lilly", "Lilly"], "HD": ["Home Depot"],
+            "JNJ": ["Johnson & Johnson", "J&J"], "GE": ["GE Aerospace"]}
 
 
 def _keyword(name: str) -> str:

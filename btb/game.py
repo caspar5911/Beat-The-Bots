@@ -26,9 +26,24 @@ from .config import NY, SG
 from .store import BOT_ID, CONF, VOID, Store
 from .telegram import Forbidden
 
-POOL = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "AVGO", "PLTR", "COIN",
-        "INTC", "DIS", "NKE", "SBUX", "BA", "JPM", "UBER", "SHOP", "MU", "ORCL", "CRM", "PYPL", "ADBE",
-        "COST", "WMT", "KO", "MCD", "XOM", "LLY", "UNH", "V", "GS", "ABNB", "SNOW", "ARM", "SMCI", "RIVN", "HOOD"]
+# Stocks grouped by industry. A day's stocks come from different industries, because stocks in the same industry
+# tend to move together (one piece of chip news moves every chip stock), which would make 5 picks really 1.
+SECTORS = {
+    "Chips": ["NVDA", "AMD", "AVGO", "INTC", "MU", "ARM", "SMCI"],
+    "Software & gadgets": ["AAPL", "MSFT", "ORCL", "CRM", "ADBE", "SNOW", "PLTR"],
+    "Internet & media": ["GOOGL", "META", "NFLX", "DIS"],
+    "Travel apps": ["UBER", "ABNB"],
+    "Shopping": ["AMZN", "SHOP", "COST", "WMT", "HD", "NKE"],
+    "Food & drink": ["KO", "MCD", "SBUX"],
+    "Banks & payments": ["JPM", "GS", "V", "PYPL"],
+    "Crypto & trading apps": ["COIN", "HOOD"],
+    "Cars": ["TSLA", "RIVN"],
+    "Health": ["LLY", "UNH", "JNJ", "PFE", "MRNA"],
+    "Energy": ["XOM", "CVX", "OXY"],
+    "Factories & planes": ["BA", "CAT", "GE"],
+}
+SECTOR = {t: name for name, tickers in SECTORS.items() for t in tickers}
+POOL = [t for tickers in SECTORS.values() for t in tickers]
 
 POST_AT = dt.time(7, 30)         # 20:30 Singapore in winter: two hours to play
 LAST_POST = dt.time(9, 20)       # too late to give people time to play: skip the day
@@ -95,7 +110,8 @@ def last_of_week(day: dt.date) -> bool:
 
 
 def pick_tickers(day: dt.date, n: int, pool=POOL) -> list[str]:
-    return random.Random(day.isoformat()).sample(list(pool), n)
+    """Random stocks from different industries."""
+    return pick_stocks(day, n, {}, pool)
 
 
 def pre_move(q: dict | None) -> float | None:
@@ -105,11 +121,26 @@ def pre_move(q: dict | None) -> float | None:
 
 
 def pick_stocks(day: dt.date, n: int, quotes: dict, pool=POOL, movers: int = MOVERS) -> list[str]:
-    """The day's biggest pre-market movers (they have news behind them) plus random others, in shuffled order."""
+    """Up to `movers` of the day's biggest pre-market movers (they have news behind them) plus random others,
+    never two from the same industry, in shuffled order."""
     rng = random.Random(day.isoformat())
+    picks, used = [], set()
     moved = sorted((t for t in pool if pre_move(quotes.get(t)) is not None), key=lambda t: -abs(pre_move(quotes[t])))
-    top = moved[:min(movers, n)]
-    picks = top + rng.sample([t for t in pool if t not in top], n - len(top))
+    for t in moved:
+        if len(picks) >= min(movers, n):
+            break
+        if SECTOR.get(t, t) not in used:
+            picks.append(t)
+            used.add(SECTOR.get(t, t))
+    groups: dict[str, list[str]] = {}
+    for t in pool:
+        groups.setdefault(SECTOR.get(t, t), []).append(t)
+    free = [g for g in groups if g not in used]
+    rng.shuffle(free)
+    for g in free[:n - len(picks)]:
+        picks.append(rng.choice(groups[g]))
+    if len(picks) < n:  # fewer industries than stocks wanted: allow repeats
+        picks += rng.sample([t for t in pool if t not in picks], n - len(picks))
     rng.shuffle(picks)
     return picks
 
@@ -271,7 +302,8 @@ class Game:
                  "• Not sure? Skip it: no points lost.",
                  f"{esc(self.bot)} (our AI) is playing too. Can you beat it?", ""]
         for i, s in enumerate(stocks, 1):
-            lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])} · {_move(s)}")
+            sector = f" ({SECTOR[s['ticker']]})" if s["ticker"] in SECTOR else ""
+            lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])}{esc(sector)} · {_move(s)}")
             if s["headlines"]:
                 lines.append(f"   • {esc(s['headlines'][0]['title'][:110])}")
         lines += ["", f"Picks close at {_sg(lock_at(day))} Singapore time. Results tomorrow morning. "
