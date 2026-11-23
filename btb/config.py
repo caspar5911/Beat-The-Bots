@@ -33,6 +33,8 @@ class Settings:
     opend_port: int = 11111
     db_path: Path = VAR / "btb.db"
     stocks_per_day: int = 5
+    game_name: str = "Huat or Not?"
+    bot_name: str = "🤖 Ah Huat"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,4 +43,5 @@ class Settings:
         return cls(telegram_token=e("BTB_TELEGRAM_TOKEN", ""), chat_id=e("BTB_CHAT_ID", ""),
                    glm_base_url=e("GLM_BASE_URL", ""), glm_model=e("GLM_MODEL", "gx10-current"),
                    glm_api_key=e("GLM_API_KEY", ""), opend_host=e("MOOMOO_OPEND_HOST", "127.0.0.1"),
-                   opend_port=int(e("MOOMOO_OPEND_PORT", "11111")))
+                   opend_port=int(e("MOOMOO_OPEND_PORT", "11111")),
+                   game_name=e("BTB_GAME_NAME", "") or "Huat or Not?", bot_name=e("BTB_BOT_NAME", "") or "🤖 Ah Huat")

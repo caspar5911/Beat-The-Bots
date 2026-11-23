@@ -1,4 +1,4 @@
-# Beat the Bot
+# Beat the Bot ("Huat or Not?")
 
 A daily stock game for a Telegram group: every US trading day, players call whether a few well-known stocks will
 **close above or below their opening price**, and an AI (your own self-hosted model) plays against them.
@@ -8,13 +8,20 @@ Just a game: no money, not investment advice.
 
 | When | What happens |
 |---|---|
-| 08:45 | Round posted: 5 stocks, pre-market move, two fresh headlines each, ⬆️/⬇️ buttons. The Bot makes its calls, hidden. |
+| 08:45 | Round posted: 5 stocks, pre-market move, two fresh headlines each, ⬆️ / ⬇️ / 🎯 x2 buttons. The AI makes its calls, hidden. |
+| 09:20 | Reminder tagging regular players who still have picks to make. |
 | until 09:30 | Players tap their calls (changeable). Votes are judged by the time the server receives them. |
-| 09:30 | Picks lock, the Bot's calls and one-line trash talk are revealed. |
+| 09:30 | Picks lock; the AI's calls, one-line trash talk and its double-down are revealed. |
 | 09:35+ | Opening prices captured. |
-| close + 10 min | Results, who beat the Bot, weekly leaderboard. |
+| 11:00 | Halftime: live standings from current prices. |
+| close + 10 min | Results, streaks, the AI's banter about named players, weekly leaderboard; titles on the week's last trading day. |
 
-Commands in the group: `/today`, `/board`, `/me`, `/help`.
+Scoring: 1 point per correct call. **Double down** (🎯 x2) on one pick a day: +2 if right, −1 if wrong; the AI
+doubles its most confident call. 🔥 marks a run of 3+ correct calls. Weekly titles: 👑 Bot Slayer (top human, if
+they beat the AI) and 🤡 the AI's Snack (bottom human, 3+ picks).
+
+Commands in the group: `/today`, `/board`, `/me`, `/help`. Names are set in `.env` (`BTB_GAME_NAME`,
+`BTB_BOT_NAME`; defaults "Huat or Not?" and "🤖 Ah Huat").
 
 The round still runs if the model is down (the Bot sits out), and a missed stage is caught up after a restart.
 A stock whose open or close cannot be confirmed from quotes, or that closes exactly flat, is not scored.

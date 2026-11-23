@@ -86,8 +86,11 @@ def main() -> int:  # pragma: no cover - interactive
     requests.get(f"{api}/getUpdates", timeout=20, params={"offset": offset, "timeout": 0})  # mark as read
     print(f"   OK: playing in '{title}' ({chat_id}).\n")
 
-    from .game import HELP
-    requests.post(f"{api}/sendMessage", timeout=20, json={"chat_id": chat_id, "text": HELP, "parse_mode": "HTML"})
+    from .config import Settings
+    from .game import help_text
+    names = Settings.from_env()
+    requests.post(f"{api}/sendMessage", timeout=20, json={"chat_id": chat_id, "parse_mode": "HTML",
+                                                          "text": help_text(names.game_name, names.bot_name)})
 
     print("3) Starting the game service...")
     unit_dir = Path.home() / ".config/systemd/user"

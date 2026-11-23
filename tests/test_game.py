@@ -44,18 +44,19 @@ class FakeQuotes:
         return {t: self.rows[t] for t in tickers if t in self.rows}
 
 
-def make(ai=True, ai_ready=True, clock_at=None):
+def make(ai=True, ai_ready=True, clock_at=None, conf=None, banter=None):
     store, tg, q = Store(":memory:"), FakeTG(), FakeQuotes()
     calls = []
 
     def call_ai(t, name, info, heads):
         calls.append(t)
-        return ("UP", f"{t} goes up, humans") if ai else None
+        return ("UP", f"{t} goes up, humans", (conf or {}).get(t, 0.5)) if ai else None
 
     clock = {"now": clock_at or ny(DAY, 8, 45)}
     game = g.Game(Settings(stocks_per_day=3), store, tg, quotes=q,
                   news=lambda t, n: [{"title": f"{t} news", "published": dt.datetime(2026, 11, 23, 12, tzinfo=dt.timezone.utc)}],
-                  call_ai=call_ai, ai_ready=lambda: ai_ready, log=lambda *_: None, clock=lambda: clock["now"])
+                  call_ai=call_ai, ai_ready=lambda: ai_ready, banter=banter, log=lambda *_: None,
+                  clock=lambda: clock["now"])
     return game, store, tg, q, calls, clock
 
 
@@ -100,7 +101,7 @@ def test_whole_day():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
     text, buttons = tg.sent[0]
-    assert "Beat the Bot" in text and "not investment advice" in text
+    assert "Huat or Not?" in text and "not investment advice" in text
     assert "goes up" not in text                     # the Bot's calls stay hidden until the lock
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     assert calls == ts
@@ -108,7 +109,7 @@ def test_whole_day():
     assert "saved" in game.on_vote(up, 7, "Ann", ny(DAY, 9, 0))
     assert "saved" in game.on_vote(down, 7, "Ann", ny(DAY, 9, 10))   # changed mind: last one counts
     for row in buttons[1:]:
-        game.on_vote(row[0][1], 7, "Ann", ny(DAY, 9, 0))
+        game.on_button(row[0][1], 7, "Ann", ny(DAY, 9, 0))
     game.on_vote(buttons[0][0][1], 8, "Ben", ny(DAY, 9, 29, 59))
     game.tick(ny(DAY, 9, 30))
     assert store.round(DAY.isoformat())["status"] == "locked"
@@ -128,11 +129,11 @@ def test_whole_day():
     game.tick(ny(DAY, 16, 10))
     assert store.round(DAY.isoformat())["status"] == "settled"
     res = tg.sent[-1][0]
-    assert "Results" in res and "Ann" in res and "Beat the Bot today: Ann" in res
-    scores = {r["name"]: (r["points"], r["played"]) for r in store.scores()}
-    assert scores["Ann"] == (3, 3)            # DOWN on #1, UP on the rest
-    assert scores["Ben"] == (0, 1)
-    assert scores[BOT_NAME] == (2, 3)
+    assert "Results" in res and "Ann" in res and "Beat Ah Huat today: Ann" in res
+    scores = {r["name"]: (r["points"], r["correct"], r["played"]) for r in store.scores()}
+    assert scores["Ann"] == (3, 3, 3)            # DOWN on #1, UP on the rest
+    assert scores["Ben"] == (0, 0, 1)
+    assert scores[BOT_NAME] == (1, 2, 3)         # the AI doubled its (first, equally sure) call on #1 and lost it
     game.tick(ny(DAY, 16, 30))                # settled rounds are left alone
     assert sum(t.startswith("🏁") for t, _ in tg.sent) == 1
 
@@ -216,7 +217,7 @@ def test_commands_and_group_handling():
     assert "No round yet" in game.on_command("/today", 1, "Ann", ny(DAY, 8))[0]
     full_day(game, store, tg, q, clock)
     text, buttons = game.on_command("/today@BeatTheBotBot", 1, "Ann", ny(DAY, 9))
-    assert "Beat the Bot" in text and buttons
+    assert "Huat or Not?" in text and buttons
     assert "This week" in game.on_command("/board@BeatTheBotBot extra", 1, "Ann", ny(DAY, 9))[0]
     assert "no settled picks" in game.on_command("/me", 1, "Ann", ny(DAY, 9))[0]
     assert game.on_command("/unknown", 1, "Ann", ny(DAY, 9)) is None
@@ -242,7 +243,9 @@ def test_news_relevance():
 
 
 def test_parse_call():
-    assert glm.parse_call('```json\n{"call":"down","reason":"meh"}\n```') == ("DOWN", "meh")
+    assert glm.parse_call('```json\n{"call":"down","reason":"meh"}\n```') == ("DOWN", "meh", 0.5)
+    assert glm.parse_call('{"call":"UP","confidence":7}')[2] == 1.0
+    assert glm.parse_call('{"call":"UP","confidence":"x"}')[2] == 0.5
     assert glm.parse_call('{"call":"SIDEWAYS"}') is None
     assert glm.parse_call("not json") is None
     assert glm.parse_call("[1]") is None
@@ -291,7 +294,7 @@ def test_failed_post_is_retried_until_lock():
     assert store.round(DAY.isoformat())["message_id"] is None
     tg.send = real
     game.tick(ny(DAY, 8, 46))
-    assert store.round(DAY.isoformat())["message_id"] == 1 and "Beat the Bot" in tg.sent[0][0]
+    assert store.round(DAY.isoformat())["message_id"] == 1 and "Huat or Not?" in tg.sent[0][0]
     assert len(calls) == 3                     # the model was not asked again
 
 
@@ -345,3 +348,164 @@ def test_setup_helpers(tmp_path):
            {"my_chat_member": {"chat": {"id": -2, "type": "group", "title": "Left"},
                                "new_chat_member": {"status": "left"}}}]
     assert group_chats(ups) == {-1001: "Old"}
+
+
+# ---------------------------------------------------------------- upgrades
+
+def settle_day(game, q, ts, day, closes, opens=None):
+    """Lock, then close each ticker at the given price from an open of 100."""
+    game.tick(ny(day, 9, 30))
+    for t, c in zip(ts, closes):
+        q.set(t, open_=100.0, last=c, when=ny(day, 16))
+    game.tick(ny(day, 16, 10) + dt.timedelta(minutes=11 * len(game.tg.sent)))  # past any retry spacing
+
+
+def test_double_down_rules_and_scoring():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    dbl = [row[2][1] for row in b]
+    assert all(len(cb.encode()) <= 64 for row in b for _, cb in row)
+    assert "first" in game.on_button(dbl[0], 7, "Ann", ny(DAY, 9))          # must pick a side first
+    game.on_button(b[0][0][1], 7, "Ann", ny(DAY, 9))                          # #1 UP
+    game.on_button(b[1][1][1], 7, "Ann", ny(DAY, 9))                          # #2 DOWN
+    assert "Doubled" in game.on_button(dbl[0], 7, "Ann", ny(DAY, 9, 1))
+    assert "Doubled" in game.on_button(dbl[1], 7, "Ann", ny(DAY, 9, 2))      # moves the double, one per day
+    mine = {v["ticker"]: v["double"] for v in store.votes(DAY.isoformat()) if v["user_id"] == 7}
+    assert mine == {ts[0]: 0, ts[1]: 1}
+    assert "removed" in game.on_button(dbl[1], 7, "Ann", ny(DAY, 9, 3))      # tap again to undo
+    game.on_button(dbl[1], 7, "Ann", ny(DAY, 9, 4))
+    game.on_button(b[1][0][1], 7, "Ann", ny(DAY, 9, 5))                       # changing the side keeps the double
+    assert "locked" in game.on_button(dbl[0], 7, "Ann", ny(DAY, 9, 30))
+    settle_day(game, q, ts, DAY, [101.0, 99.0, 101.0])                        # #1 UP right, #2 now UP: doubled wrong
+    ann = next(r for r in store.scores() if r["user_id"] == 7)
+    assert (ann["points"], ann["correct"], ann["played"]) == (0, 1, 2)       # +1 and -1
+
+
+def test_ai_doubles_its_surest_call():
+    ts = g.pick_tickers(DAY, 3)
+    game, store, tg, q, calls, clock = make(conf={ts[1]: 0.9})
+    full_day(game, store, tg, q, clock)
+    game.tick(ny(DAY, 9, 30))
+    assert f"Ah Huat doubles down on <b>{ts[1]}</b>" in tg.sent[-1][0]
+    assert [v["ticker"] for v in store.votes(DAY.isoformat()) if v["user_id"] == BOT_ID and v["double"]] == [ts[1]]
+
+
+def test_reminder_tags_regulars_missing_picks():
+    game, store, tg, q, calls, clock = make()
+    prev = dt.date(2026, 11, 20)
+    store.player(7, "Ann"); store.player(8, "Ben"); store.player(9, "Old")
+    store.vote(prev.isoformat(), "AAPL", 7, "UP", "x"); store.vote(prev.isoformat(), "AAPL", 8, "UP", "x")
+    store.vote("2026-10-01", "AAPL", 9, "UP", "x")                           # inactive: not nagged
+    ts = full_day(game, store, tg, q, clock)
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    for row in b:
+        game.on_button(row[0][1], 8, "Ben", ny(DAY, 9))                       # Ben is done
+    game.on_button(b[0][0][1], 7, "Ann", ny(DAY, 9))                          # Ann made 1 of 3
+    game.tick(ny(DAY, 9, 19))
+    assert not any("10 minutes" in t for t, _ in tg.sent)
+    game.tick(ny(DAY, 9, 20))
+    text = tg.sent[-1][0]
+    assert "10 minutes" in text and 'tg://user?id=7' in text and "2 left" in text
+    assert "id=8" not in text and "id=9" not in text
+    game.tick(ny(DAY, 9, 25))
+    assert sum("10 minutes" in t for t, _ in tg.sent) == 1
+
+
+def test_reminder_without_regulars():
+    game, store, tg, q, calls, clock = make()
+    full_day(game, store, tg, q, clock)
+    game.tick(ny(DAY, 9, 21))
+    assert "Last chance" in tg.sent[-1][0]
+
+
+def test_halftime_live_standings():
+    game, store, tg, q, calls, clock = make()
+    ts = full_day(game, store, tg, q, clock)
+    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    for row in b:
+        game.on_button(row[1][1], 7, "Ann", ny(DAY, 9))                       # Ann: all DOWN, the AI: all UP
+    game.tick(ny(DAY, 9, 30))
+    for t in ts:
+        q.set(t, open_=100.0, last=97.0, when=ny(DAY, 11, 0))
+    game.tick(ny(DAY, 10, 59))
+    assert not any(t.startswith("⏱") for t, _ in tg.sent)
+    game.tick(ny(DAY, 11, 0))
+    text = tg.sent[-1][0]
+    assert "Halftime" in text and "-3.0% since the open" in text and "is losing" in text
+    assert "Ann: 3 pts" in text
+    game.tick(ny(DAY, 11, 30))
+    assert sum(t.startswith("⏱") for t, _ in tg.sent) == 1
+
+
+def test_halftime_skipped_when_late():
+    game, store, tg, q, calls, clock = make()
+    full_day(game, store, tg, q, clock)
+    game.tick(ny(DAY, 9, 30))
+    game.tick(ny(DAY, 15, 45))                                                # bot was down all day
+    assert not any(t.startswith("⏱") for t, _ in tg.sent) and store.get(f"halftime:{DAY.isoformat()}") == "skipped"
+
+
+def test_streaks_and_banter():
+    said = []
+    game, store, tg, q, calls, clock = make(banter=lambda summary: said.append(summary) or "Ann got lucky.")
+    ts = full_day(game, store, tg, q, clock)
+    for row in game.buttons(DAY, store.stocks(DAY.isoformat())):
+        game.on_button(row[0][1], 7, "Ann", ny(DAY, 9))
+    settle_day(game, q, ts, DAY, [101.0, 102.0, 103.0])
+    res = tg.sent[-1][0]
+    assert "💬" in res and "Ann got lucky." in res and said[0]["you"] == BOT_ID
+    assert store.streaks()[7] == 3 and "🔥3" in res
+    assert "🔥 3 in a row" in game.on_command("/me", 7, "Ann", ny(DAY, 17))[0]
+
+
+def test_banter_falls_back_when_model_fails():
+    def boom(summary):
+        raise RuntimeError("down")
+    game, store, tg, q, calls, clock = make(banter=boom)
+    ts = full_day(game, store, tg, q, clock)
+    for row in game.buttons(DAY, store.stocks(DAY.isoformat())):
+        game.on_button(row[1][1], 7, "Ann", ny(DAY, 9))
+        game.on_button(row[1][1], 8, "Ben", ny(DAY, 9))
+    settle_day(game, q, ts, DAY, [101.0, 102.0, 103.0])                       # the AI was right, humans all wrong
+    assert "goldfish" in tg.sent[-1][0]
+    assert "No humans" in g.fallback_banter("🤖 X", [{"user_id": BOT_ID, "points": 1, "correct": 1, "played": 1}])
+
+
+def test_weekly_titles_on_last_trading_day():
+    fri = dt.date(2026, 11, 20)
+    assert g.last_of_week(fri) and not g.last_of_week(DAY)
+    assert g.last_of_week(dt.date(2026, 11, 27))                              # half-day Friday
+    game, store, tg, q, calls, clock = make(clock_at=ny(fri, 8, 45))
+    game.tick(ny(fri, 8, 45))
+    ts = tickers(store, fri)
+    b = game.buttons(fri, store.stocks(fri.isoformat()))
+    for i, row in enumerate(b):
+        game.on_button(row[1 if i == 0 else 0][1], 7, "Ann", ny(fri, 9))      # Ann: #1 DOWN (doubled), rest UP
+        game.on_button(row[1][1], 8, "Ben", ny(fri, 9))                       # Ben: all DOWN
+    game.on_button(b[0][2][1], 7, "Ann", ny(fri, 9))
+    settle_day(game, q, ts, fri, [99.0, 102.0, 103.0])                        # the AI doubled #1 UP and lost
+    res = tg.sent[-1][0]
+    assert "Titles of the week" in res and "👑 Bot Slayer: <b>Ann</b>" in res and "Snack: <b>Ben</b>" in res
+    board = game.on_command("/board", 7, "Ann", ny(DAY, 8))[0]                # next week: last week's titles
+    assert "Last week's titles" in board and "Bot Slayer" in board
+
+
+def test_old_database_is_migrated(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript("""CREATE TABLE stocks (day TEXT NOT NULL, pos INTEGER NOT NULL, ticker TEXT NOT NULL,
+        name TEXT NOT NULL, prev_close REAL, pre_price REAL, headlines TEXT NOT NULL DEFAULT '[]', ai_call TEXT,
+        ai_reason TEXT NOT NULL DEFAULT '', open REAL, close REAL, result TEXT, PRIMARY KEY (day, ticker));
+        CREATE TABLE votes (day TEXT NOT NULL, ticker TEXT NOT NULL, user_id INTEGER NOT NULL, call TEXT NOT NULL,
+        at TEXT NOT NULL, PRIMARY KEY (day, ticker, user_id));
+        CREATE TABLE players (user_id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        INSERT INTO players VALUES (0, '🤖 The Bot');""")
+    db.commit(); db.close()
+    store = Store(path, "🤖 Ah Huat")
+    store.player(7, "Ann")
+    store.vote("2026-11-23", "AAPL", 7, "UP", "x")
+    store.set_double("2026-11-23", 7, "AAPL")
+    assert store.votes("2026-11-23")[0]["double"] == 1
+    assert store.db.execute("SELECT name FROM players WHERE user_id=0").fetchone()[0] == "🤖 Ah Huat"

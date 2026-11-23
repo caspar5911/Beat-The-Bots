@@ -8,7 +8,7 @@ import requests
 
 from .config import Settings
 
-SYSTEM = """You are "the Bot", a cocky but honest AI playing a daily stock game against humans.
+SYSTEM = """You are "{bot}", a cocky but honest AI playing a daily stock game against humans.
 For ONE US stock you get the previous close, the pre-market price and recent headlines.
 Predict whether TODAY's regular-session CLOSE will be ABOVE (UP) or BELOW (DOWN) today's OPEN price.
 Note: the opening gap is already priced in at the open; you are calling the move from open to close.
@@ -35,7 +35,11 @@ def _headers(s: Settings) -> dict:
     return h
 
 
-def parse_call(content: str) -> tuple[str, str] | None:
+def _name(bot: str) -> str:
+    return "".join(ch for ch in bot if ch.isalnum() or ch in " '-").strip() or "the Bot"
+
+
+def parse_call(content: str) -> tuple[str, str, float] | None:
     content = (content or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         data = json.loads(content)
@@ -46,7 +50,12 @@ def parse_call(content: str) -> tuple[str, str] | None:
     call = str(data.get("call", "")).upper()
     if call not in ("UP", "DOWN"):
         return None
-    return call, str(data.get("reason", "")).strip()[:200]
+    try:
+        conf = min(max(float(data.get("confidence", 0.5)), 0.0), 1.0)
+        conf = conf if conf == conf else 0.5
+    except (TypeError, ValueError):
+        conf = 0.5
+    return call, str(data.get("reason", "")).strip()[:200], conf
 
 
 def prompt(ticker: str, name: str, quote: dict, news: list[dict]) -> str:
@@ -62,11 +71,11 @@ def prompt(ticker: str, name: str, quote: dict, news: list[dict]) -> str:
 
 
 def call_stock(s: Settings, ticker: str, name: str, quote: dict, news: list[dict], session=None,
-               timeout: float = 120, retries: int = 1, sleep=time.sleep) -> tuple[str, str] | None:
-    """(UP|DOWN, reason), or None when the model is unavailable or answers badly (the Bot sits that stock out)."""
+               timeout: float = 120, retries: int = 1, sleep=time.sleep) -> tuple[str, str, float] | None:
+    """(UP|DOWN, reason, confidence), or None when the model is unavailable or answers badly (the AI sits it out)."""
     body = {"model": s.glm_model, "reasoning_effort": "low", "max_tokens": 1200, "temperature": 0.3,
             "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": SYSTEM},
+            "messages": [{"role": "system", "content": SYSTEM.replace("{bot}", _name(s.bot_name))},
                          {"role": "user", "content": prompt(ticker, name, quote, news)}]}
     for attempt in range(retries + 1):
         try:
@@ -81,3 +90,24 @@ def call_stock(s: Settings, ticker: str, name: str, quote: dict, news: list[dict
         if attempt < retries:
             sleep(5)
     return None
+
+
+BANTER = """You are "{bot}", a cocky AI that just finished a daily stock-calling game against a group of friends.
+You get today's results as JSON: each stock's result, and each player's points, correct calls and picks played
+(your own row has user_id equal to "you"). Write the results-time banter: at most 2 short sentences,
+naming 1 to 3 players. Tease bad PICKS, give grudging respect to anyone who beat you, gloat if you won.
+Playful only: no profanity, nothing about anyone's identity, looks, money or life. Plain text, no JSON, no hashtags."""
+
+
+def banter(s: Settings, summary: dict, session=None, timeout: float = 120) -> str | None:
+    body = {"model": s.glm_model, "reasoning_effort": "low", "max_tokens": 1500, "temperature": 0.8,
+            "messages": [{"role": "system", "content": BANTER.replace("{bot}", _name(s.bot_name))},
+                         {"role": "user", "content": json.dumps(summary, default=str)}]}
+    try:
+        r = (session or requests).post(f"{s.glm_base_url.rstrip('/')}/chat/completions", json=body,
+                                       headers=_headers(s), timeout=timeout)
+        r.raise_for_status()
+        text = (r.json()["choices"][0]["message"].get("content") or "").strip().strip('"')
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        return None
+    return text[:300] or None

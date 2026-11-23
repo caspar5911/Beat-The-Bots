@@ -20,7 +20,7 @@ def display_name(user: dict) -> str:
 def make_game(s: Settings, store: Store, tg, clock=None) -> Game:
     return Game(s, store, tg, quotes=market.Quotes(s), news=news.headlines,
                 call_ai=lambda t, name, q, h: glm.call_stock(s, t, name, q, h),
-                ai_ready=lambda: glm.healthy(s), clock=clock)
+                ai_ready=lambda: glm.healthy(s), banter=lambda summary: glm.banter(s, summary), clock=clock)
 
 
 def handle(game: Game, tg, chat_id: str, u: dict, now: dt.datetime) -> None:
@@ -29,7 +29,7 @@ def handle(game: Game, tg, chat_id: str, u: dict, now: dt.datetime) -> None:
             tg.answer(cq["id"], "This game runs in its own group.")
             return
         user = cq.get("from") or {}
-        tg.answer(cq["id"], game.on_vote(cq.get("data", ""), int(user.get("id", -1)), display_name(user), now))
+        tg.answer(cq["id"], game.on_button(cq.get("data", ""), int(user.get("id", -1)), display_name(user), now))
     elif m := u.get("message"):
         if str(m.get("chat", {}).get("id")) != chat_id or not (m.get("text") or "").startswith("/"):
             return
@@ -41,7 +41,6 @@ def handle(game: Game, tg, chat_id: str, u: dict, now: dt.datetime) -> None:
 
 def refresh_count(game: Game, tg, now: dt.datetime) -> None:
     """Keep the 'Players so far' line of the open round current (at most once per tick)."""
-    from .game import round_text, buttons
     day = now.astimezone(NY).date()
     key = day.isoformat()
     r = game.store.round(key)
@@ -50,7 +49,7 @@ def refresh_count(game: Game, tg, now: dt.datetime) -> None:
     n = game.voters(key)
     if str(n) != game.store.get(f"shown_voters:{key}", "0"):
         stocks = game.store.stocks(key)
-        tg.edit(r["message_id"], round_text(day, stocks, n), buttons(day, stocks))
+        tg.edit(r["message_id"], game.round_text(day, stocks, n), game.buttons(day, stocks))
         game.store.set(f"shown_voters:{key}", str(n))
 
 
@@ -59,7 +58,7 @@ def run(s: Settings) -> int:  # pragma: no cover - network loop
     if not s.telegram_token or not s.chat_id or not s.glm_base_url:
         print("Set BTB_TELEGRAM_TOKEN, BTB_CHAT_ID and GLM_BASE_URL in .env first (see README).")
         return 2
-    store, tg = Store(s.db_path), Telegram(s.telegram_token, s.chat_id)
+    store, tg = Store(s.db_path, s.bot_name), Telegram(s.telegram_token, s.chat_id)
     game = make_game(s, store, tg)
     offset = int(store.get("tg_offset", "0") or 0)
     last_tick = 0.0
@@ -107,13 +106,18 @@ def demo(s: Settings) -> int:
     day = dt.datetime.now(NY).date()
     if not market.is_trading_day(day):
         day = market.next_trading_day(day)
-    store = Store(":memory:")
+    store = Store(":memory:", s.bot_name)
     game = make_game(s, store, Printer(), clock=lambda: at(day, POST_AT))
     t0 = time.monotonic()
     game.create(day, at(day, POST_AT))
     print(f"(round built in {time.monotonic() - t0:.0f}s; the Bot's hidden calls:)")
     for st in store.stocks(day.isoformat()):
-        print(f"  {st['ticker']}: {st['ai_call'] or 'sat out'} · {st['ai_reason']}")
+        print(f"  {st['ticker']}: {st['ai_call'] or 'sat out'} ({st['ai_conf'] or 0:.2f}) · {st['ai_reason']}")
+    sample = {"stocks": [{"ticker": st["ticker"], "result": st["ai_call"]} for st in store.stocks(day.isoformat())],
+              "scores": [{"user_id": 0, "name": s.bot_name, "points": 4, "correct": 3, "played": 5},
+                         {"user_id": 1, "name": "Ann", "points": 5, "correct": 4, "played": 5},
+                         {"user_id": 2, "name": "Ben", "points": -1, "correct": 1, "played": 5}], "you": 0}
+    print("(sample results banter:)", glm.banter(s, sample))
     return 0
 
 
