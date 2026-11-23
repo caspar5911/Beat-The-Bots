@@ -35,6 +35,7 @@ class Settings:
     stocks_per_day: int = 5
     game_name: str = "Huat or Not?"
     bot_name: str = "🤖 Ah Huat"
+    max_groups: int = 20
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,4 +45,5 @@ class Settings:
                    glm_base_url=e("GLM_BASE_URL", ""), glm_model=e("GLM_MODEL", "gx10-current"),
                    glm_api_key=e("GLM_API_KEY", ""), opend_host=e("MOOMOO_OPEND_HOST", "127.0.0.1"),
                    opend_port=int(e("MOOMOO_OPEND_PORT", "11111")),
-                   game_name=e("BTB_GAME_NAME", "") or "Huat or Not?", bot_name=e("BTB_BOT_NAME", "") or "🤖 Ah Huat")
+                   game_name=e("BTB_GAME_NAME", "") or "Huat or Not?", bot_name=e("BTB_BOT_NAME", "") or "🤖 Ah Huat",
+                   max_groups=int(e("BTB_MAX_GROUPS", "20") or 20))

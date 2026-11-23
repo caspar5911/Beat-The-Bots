@@ -111,3 +111,32 @@ def banter(s: Settings, summary: dict, session=None, timeout: float = 120) -> st
     except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
         return None
     return text[:300] or None
+
+
+MOVER = """You are "{bot}", a cocky AI in a daily stock game. Below are today's stocks with the previous close,
+pre-market price and headlines. Bonus question: which ONE will have the LARGEST absolute move (up or down) from
+today's OPEN to today's CLOSE? Big news, earnings and volatile names move more; the opening gap itself does not count.
+Use only the data given. Answer with ONE JSON object and nothing else:
+{"ticker":"XXX","reason":"one short punchy sentence"}"""
+
+
+def call_mover(s: Settings, stocks: list[dict], session=None, timeout: float = 120) -> tuple[str, str] | None:
+    lines = []
+    for st in stocks:
+        lines.append(prompt(st["ticker"], st["name"], st, st.get("headlines") or []))
+    body = {"model": s.glm_model, "reasoning_effort": "low", "max_tokens": 1200, "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": MOVER.replace("{bot}", _name(s.bot_name))},
+                         {"role": "user", "content": "\n\n".join(lines)}]}
+    try:
+        r = (session or requests).post(f"{s.glm_base_url.rstrip('/')}/chat/completions", json=body,
+                                       headers=_headers(s), timeout=timeout)
+        r.raise_for_status()
+        content = (r.json()["choices"][0]["message"].get("content") or "").strip()
+        data = json.loads(content.removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        return None
+    ticker = str(data.get("ticker", "")).upper() if isinstance(data, dict) else ""
+    if ticker not in {st["ticker"] for st in stocks}:
+        return None
+    return ticker, str(data.get("reason", "")).strip()[:200]

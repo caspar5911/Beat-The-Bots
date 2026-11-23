@@ -10,6 +10,10 @@ from zoneinfo import ZoneInfo
 import requests
 
 
+class Forbidden(Exception):
+    """The bot can no longer post in a chat (removed from the group, or blocked)."""
+
+
 def keyboard(rows) -> dict | None:
     if not rows:
         return None
@@ -52,14 +56,31 @@ class Telegram:
         if buttons:
             params["reply_markup"] = keyboard(buttons)
         res = self.call("sendMessage", **params)
+        if res.get("error_code") == 403:
+            raise Forbidden(res.get("description", ""))
         if not res.get("ok"):  # markup rejected: fall back to plain text
             params.pop("parse_mode")
             params["text"] = plain(text)
             res = self.call("sendMessage", **params)
         return (res.get("result") or {}).get("message_id")
 
-    def edit(self, message_id: int, text: str, buttons=None) -> None:
-        params = {"chat_id": self.chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
+    def send_photo(self, png: bytes, caption: str = "", chat_id: str | None = None) -> int | None:
+        r = self.http.post(f"{self.api}/sendPhoto", timeout=60,
+                           data={"chat_id": chat_id or self.chat_id, "caption": caption[:1000]},
+                           files={"photo": ("card.png", png, "image/png")})
+        try:
+            res = r.json()
+        except ValueError:
+            return None
+        if res.get("error_code") == 403:
+            raise Forbidden(res.get("description", ""))
+        return (res.get("result") or {}).get("message_id")
+
+    def leave(self, chat_id) -> None:
+        self.call("leaveChat", chat_id=chat_id)
+
+    def edit(self, message_id: int, text: str, buttons=None, chat_id: str | None = None) -> None:
+        params = {"chat_id": chat_id or self.chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
                   "disable_web_page_preview": True}
         if buttons:
             params["reply_markup"] = keyboard(buttons)
@@ -71,6 +92,6 @@ class Telegram:
     def updates(self, offset: int, timeout: int = 25) -> list[dict]:
         r = self.http.get(f"{self.api}/getUpdates", timeout=timeout + 15,
                           params={"timeout": timeout, "offset": offset,
-                                  "allowed_updates": '["message","callback_query"]'})
+                                  "allowed_updates": '["message","callback_query","my_chat_member"]'})
         data = r.json()
         return data.get("result", []) if data.get("ok") else []
