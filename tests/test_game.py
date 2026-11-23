@@ -605,24 +605,24 @@ def test_practice_when_quotes_down():
 # ---------------------------------------------------------------- round 3: groups, movers, bonus, cards
 
 def test_pick_stocks_prefers_premarket_movers():
-    q = {t: {"pre_price": 101.0, "prev_close": 100.0} for t in g.POOL}
-    q["F"]["pre_price"], q["KO"]["pre_price"], q["NVDA"]["pre_price"] = 92.0, 106.0, 104.0
+    q = {t: {"pre_price": 100.2, "prev_close": 100.0} for t in g.ETF_POOL}
+    q["XLE"]["pre_price"], q["XLV"]["pre_price"], q["SMH"]["pre_price"] = 92.0, 106.0, 104.0
     picks = g.pick_stocks(DAY, 5, q)
-    assert {"F", "KO", "NVDA"} <= set(picks) and len(set(picks)) == 5
+    assert {"XLE", "XLV", "SMH"} <= set(picks) and len(set(picks)) == 5 and "XLK" not in picks
     assert picks == g.pick_stocks(DAY, 5, q)                  # deterministic for the day
     assert len(g.pick_stocks(DAY, 5, {})) == 5                # no pre-market prices: random
 
 
 def test_round_uses_movers_and_one_quote_call():
     game, store, tg, q, calls, clock = make()
-    for t in g.POOL:
+    for t in g.ETF_POOL:
         q.set(t, pre=100.5)
-    q.set("F", pre=93.0)
+    q.set("XLE", pre=93.0)
     seen = []
     real = q.__call__
     game.quotes = lambda ts: seen.append(len(ts)) or real(ts)
     game.tick(ny(DAY, 7, 30))
-    assert seen == [len(g.POOL)] and "F" in tickers(store)
+    assert seen == [len(g.ETF_POOL)] and "XLE" in tickers(store)
 
 
 def test_whole_market_line_and_extras_are_off_by_default():
@@ -638,7 +638,7 @@ def test_whole_market_line_and_extras_are_off_by_default():
     q.set("SPY", open_=500.0, last=495.0, prev_close=502.0, when=ny(DAY, 16))
     settle_day(game, q, ts, DAY, [99.0, 98.0, 101.0])
     res = next(t for t, _ in reversed(tg.sent) if t.startswith("🏁"))
-    assert "🌍 The whole US market (SPY) went -1.0% today. Most of today's stocks went the same way." in res
+    assert "🌍 The whole US market (SPY) went -1.0% today. Most of today's picks went the same way." in res
     assert "Moved the most" not in res
     game.tick(dt.datetime(2026, 11, 28, 10, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))))
     assert not getattr(tg, "polls", [])                                     # quiz is off
@@ -1048,15 +1048,61 @@ def test_my_picks_popup_and_toast():
 
 
 
-def test_stocks_come_from_different_industries():
-    q = {t: {"pre_price": 100.5, "prev_close": 100.0} for t in g.POOL}
-    for t, p in (("NVDA", 90.0), ("INTC", 91.0), ("AMD", 92.0), ("GOOGL", 103.0), ("META", 97.5)):
-        q[t]["pre_price"] = p                                   # tonight: chips and internet move most
+def test_funds_come_from_different_industries():
+    q = {t: {"pre_price": 100.1, "prev_close": 100.0} for t in g.ETF_POOL}
+    q["SMH"]["pre_price"], q["XLK"]["pre_price"] = 95.0, 96.0           # chips and tech move together
     picks = g.pick_stocks(DAY, 5, q)
-    assert len({g.SECTOR[t] for t in picks}) == 5
-    assert "NVDA" in picks and "INTC" not in picks and "AMD" not in picks   # only the biggest chip mover
-    assert "GOOGL" in picks
-    for d in range(60):                                        # any day, with or without prices
-        day = DAY + dt.timedelta(days=d)
-        assert len({g.SECTOR[t] for t in g.pick_tickers(day, 5)}) == 5
-    assert set(g.POOL) == set(g.SECTOR) and len(g.POOL) == len(set(g.POOL))
+    assert "SMH" in picks and "XLK" not in picks and len({g.ETF_GROUP[t] for t in picks}) == 5
+    for d in range(60):
+        assert len({g.ETF_GROUP[t] for t in g.pick_tickers(DAY + dt.timedelta(days=d), 5)}) == 5
+    assert set(g.ETF_POOL) == set(g.ETF_LABEL) == set(g.ETF_NEWS) == set(g.ETF_GROUP)
+    assert set(g.POOL) == set(g.SECTOR) and len(g.POOL) == len(set(g.POOL))   # stocks stay for practice
+
+
+def test_suggestions_join_the_next_game():
+    game, store, tg, q, calls, clock = make()
+    for t in ("NVDA", "TSLA", "KO"):
+        q.set(t, last=100.0, prev_close=99.0, pre=101.0, when=ny(DAY - dt.timedelta(days=3), 16))
+    assert "/suggest NVDA" in game.on_command("/suggest", 7, "Ann", ny(DAY, 6))[0]
+    reply = game.on_command("/suggest nvda", 7, "Ann", ny(DAY, 6))[0]
+    assert "suggested <b>NVDA</b>" in reply and "Mon 23 Nov" in reply and "NVDA (1)" in reply
+    game.on_command("/suggest KO", 8, "Ben", ny(DAY, 6))
+    game.on_command("/suggest NVDA", 8, "Ben", ny(DAY, 6, 1))                # Ben changes his mind: 1 each
+    game.on_command("/suggest TSLA", 9, "Cat", ny(DAY, 6, 2))
+    assert "NVDA (2) · TSLA (1)" in game.on_command("/suggest", 9, "Cat", ny(DAY, 6, 3))[0]
+    assert "can't find" in game.on_command("/suggest ZZZZ", 9, "Cat", ny(DAY, 6))[0]
+    assert "Tue 24 Nov" in game.on_command("/suggest KO", 9, "Cat", ny(DAY, 8))[0]   # after 07:30: next game
+    game.tick(ny(DAY, 7, 30))
+    ts = tickers(store)
+    assert ts[:2] == ["NVDA", "TSLA"] and ts[2] in g.ETF_POOL                 # 3 per day in tests: 2 ideas + 1 fund
+    text = tg.sent[0][0]
+    assert "💡 suggested by Ann, Ben" in text and "💡 suggested by Cat" in text and "/suggest NVDA" in text
+    assert g.esc(g.ETF_LABEL[ts[2]]) in text and "Most lines below are whole industries" in text
+
+
+def test_funds_get_industry_news():
+    from btb import news
+
+    class Resp:
+        status_code = 200
+        text = ("<rss><channel>"
+                "<item><title>Oil jumps as OPEC cuts output - Reuters</title><pubDate>Mon, 23 Nov 2026 10:00:00 GMT</pubDate></item>"
+                "<item><title>Celebrity wedding news - Gossip</title><pubDate>Mon, 23 Nov 2026 10:00:00 GMT</pubDate></item>"
+                "</channel></rss>")
+
+    class Session:
+        def get(self, url, headers=None, timeout=None):
+            assert "oil%20prices" in url
+            return Resp()
+
+    got = news.topic(*g.ETF_NEWS["XLE"], now=dt.datetime(2026, 11, 23, 12, tzinfo=dt.timezone.utc), session=Session())
+    assert [h["title"] for h in got] == ["Oil jumps as OPEC cuts output - Reuters"]
+
+
+
+def test_intro_matches_what_is_in_the_round():
+    fund = {"ticker": "XLE"}
+    stock = {"ticker": "AMZN"}
+    assert "whole industry" in g.Game.what_lines([fund, fund])
+    assert "suggested by players" in g.Game.what_lines([stock, fund])
+    assert "one company's stock" in g.Game.what_lines([stock, stock])

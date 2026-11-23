@@ -14,7 +14,7 @@ don't. Scores reward honest confidence, and the reports show players their own h
 
 | When | What happens |
 |---|---|
-| 07:30 | Round posted in every group: 5 well-known US brands from 5 different industries (up to 3 are the day's biggest pre-market movers), each with its pre-market move and one headline. Buttons per stock: ⏫ very sure up · ⬆️ think so up · ⬇️ think so down · ⏬ very sure down. The AI makes its calls with an honest confidence, hidden. |
+| 07:30 | Round posted in every group: 5 industry funds (ETFs, e.g. XLF banks, XLE oil) from 5 different industries (up to 3 are the day's biggest pre-market movers), except that the 2 stocks players suggested most with `/suggest` take 2 of the places; each with each with its pre-market move and one headline. Buttons per stock: ⏫ very sure up · ⬆️ think so up · ⬇️ think so down · ⏬ very sure down. The AI makes its calls with an honest confidence, hidden. |
 | 09:20 | Reminder tagging regular players who still have picks to make. |
 | 09:30 | Picks lock: the group's split per stock and the AI's calls, confidence and reasons are revealed. |
 | 11:00 | Halfway update (optional: `/halfway on`): live standings. |
@@ -41,6 +41,8 @@ Tap a pick again to undo it. 🚀 Naming the stock with the biggest open-to-clos
 - `/league`, `/league join`, `/league leave`: groups vs groups by average points per player (opt-in: joining shows
   the group's name to the other groups)
 - `/practice`: a 2-minute unscored round on the last completed session, playable at any hour
+- `/suggest NVDA`: suggest a stock for the next game; the 2 most-suggested replace 2 of its funds (one
+  suggestion per player per game; a new one replaces the old)
 - `/pick NVDA`: an **own pick** on any US stock, any time. During the session it starts from the current price
   (until 30 minutes before the close); otherwise from the next open. It's judged at that session's close with the
   same points, on a separate "own picks" score. Up to 3 a day per player; anyone can tap the buttons to pick the same

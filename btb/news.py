@@ -99,3 +99,16 @@ def headlines(ticker: str, name: str = "", now: dt.datetime | None = None, sessi
         except requests.RequestException:
             continue
     return dedupe_recent([i for i in items if about(i["title"], ticker, name)], now)
+
+
+def topic(query: str, words: list[str], now: dt.datetime | None = None, session=None) -> list[dict]:
+    """Headlines about an industry (for industry funds, which rarely make the news by name)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}+when:1d&hl=en-US&gl=US&ceid=US:en"
+    try:
+        r = (session or requests).get(url, headers={"User-Agent": UA}, timeout=15)
+        items = parse_rss(r.text) if r.status_code == 200 else []
+    except requests.RequestException:
+        items = []
+    keep = [i for i in items if any(re.search(rf"\b{re.escape(w)}", i["title"], re.I) for w in words)]
+    return dedupe_recent(keep, now, hours=24)

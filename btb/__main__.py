@@ -18,7 +18,12 @@ def display_name(user: dict) -> str:
 
 
 def make_game(s: Settings, store: Store, tg, clock=None) -> Game:
-    return Game(s, store, tg, quotes=market.Quotes(s), news=news.headlines,
+    from .game import ETF_NEWS
+
+    def headlines(ticker: str, name: str) -> list[dict]:
+        return news.topic(*ETF_NEWS[ticker]) if ticker in ETF_NEWS else news.headlines(ticker, name)
+
+    return Game(s, store, tg, quotes=market.Quotes(s), news=headlines,
                 call_ai=lambda t, name, q, h: glm.call_stock(s, t, name, q, h),
                 ai_ready=lambda: glm.healthy(s), banter=lambda summary: glm.banter(s, summary),
                 call_mover=lambda stocks: glm.call_mover(s, stocks), clock=clock,

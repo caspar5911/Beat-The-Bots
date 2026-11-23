@@ -42,7 +42,40 @@ SECTORS = {
     "Planes & machines": ["BA", "GE"],
 }
 SECTOR = {t: name for name, tickers in SECTORS.items() for t in tickers}
-POOL = [t for tickers in SECTORS.values() for t in tickers]
+POOL = [t for tickers in SECTORS.values() for t in tickers]   # well-known stocks: practice games
+
+# The daily game plays industry funds (ETFs): each holds many companies, so one company's news matters less.
+# Funds that move almost the same share a group, and a day never has two from one group.
+ETF_GROUPS = {
+    "Tech": ["XLK", "SMH"], "Internet & media": ["XLC"], "Shopping & cars": ["XLY"], "Everyday goods": ["XLP"],
+    "Banks": ["XLF"], "Health": ["XLV"], "Oil & gas": ["XLE"], "Factories & planes": ["XLI"],
+    "Property": ["XLRE"], "Power & water": ["XLU"], "Materials": ["XLB"],
+}
+ETF_GROUP = {t: g for g, ts in ETF_GROUPS.items() for t in ts}
+ETF_POOL = [t for ts in ETF_GROUPS.values() for t in ts]
+ETF_LABEL = {
+    "XLK": "US tech companies (Apple, Microsoft, Nvidia)", "SMH": "Chip makers (Nvidia, TSMC, Broadcom)",
+    "XLC": "Internet & media (Google, Meta, Netflix)", "XLY": "Shopping & cars (Amazon, Tesla, McDonald's)",
+    "XLP": "Everyday goods (Walmart, Costco, Coca-Cola)", "XLF": "Banks & payments (JPMorgan, Visa, Mastercard)",
+    "XLV": "Health (Eli Lilly, UnitedHealth, J&J)", "XLE": "Oil & gas (Exxon, Chevron)",
+    "XLI": "Factories & planes (GE, Caterpillar, Boeing)", "XLRE": "Property (offices, malls, data centres)",
+    "XLU": "Power & water companies", "XLB": "Materials (chemicals, mining)",
+}
+ETF_NEWS = {  # (news search, words a headline must contain)
+    "XLK": ('"tech stocks" OR "technology stocks" OR "tech sector"', ["tech", "technology"]),
+    "SMH": ('"chip stocks" OR semiconductor OR "chipmakers"', ["chip", "semiconductor", "Nvidia", "TSMC"]),
+    "XLC": ("Alphabet OR Meta OR Netflix stock", ["Google", "Alphabet", "Meta", "Netflix"]),
+    "XLY": ('"consumer stocks" OR Amazon OR Tesla stock', ["consumer", "Amazon", "Tesla", "retail"]),
+    "XLP": ('"consumer staples" OR Walmart OR Costco OR "Coca-Cola" stock', ["staples", "Walmart", "Costco", "Coca-Cola"]),
+    "XLF": ('"bank stocks" OR "financial stocks" OR JPMorgan', ["bank", "financial", "JPMorgan"]),
+    "XLV": ('"healthcare stocks" OR "health stocks" OR "pharma stocks"', ["health", "pharma", "drug"]),
+    "XLE": ('"oil prices" OR "energy stocks"', ["oil", "energy", "crude", "OPEC"]),
+    "XLI": ('"industrial stocks" OR Boeing OR Caterpillar', ["industrial", "Boeing", "Caterpillar"]),
+    "XLRE": ('"real estate stocks" OR REIT', ["real estate", "REIT"]),
+    "XLU": ('"utility stocks" OR "utilities stocks"', ["utility", "utilities"]),
+    "XLB": ('"materials stocks" OR "copper prices" OR "chemical stocks"', ["copper", "chemical", "steel", "materials stocks"]),
+}
+SUGGESTED_MAX = 2                 # most-suggested stocks that join a game
 
 POST_AT = dt.time(7, 30)         # 20:30 Singapore in winter: two hours to play
 LAST_POST = dt.time(9, 20)       # too late to give people time to play: skip the day
@@ -75,7 +108,8 @@ TICKER = re.compile(r"^[A-Z][A-Z.]{0,5}$")
 QUIZ_POST = (5, dt.time(10, 0))     # Saturday 10:00 Singapore
 QUIZ_RESULTS = (6, dt.time(20, 0))  # Sunday 20:00 Singapore
 
-COMMANDS = [("today", "Today's stocks"), ("pick", "Pick any stock yourself, e.g. /pick NVDA"),
+COMMANDS = [("today", "Today's game"), ("suggest", "Suggest a stock for the next game"),
+            ("pick", "Pick any stock yourself, e.g. /pick NVDA"),
             ("board", "Scores"), ("me", "My score"), ("report", "How good are my choices?"),
             ("bot", "How good is the AI?"), ("practice", "Quick 2-minute game"), ("help", "How to play")]
 EXTRAS = {"halfway": "a halfway update around midnight", "quiz": "a 5-question money quiz every weekend"}
@@ -108,9 +142,9 @@ def last_of_week(day: dt.date) -> bool:
     return week_start(market.next_trading_day(day)) != week_start(day)
 
 
-def pick_tickers(day: dt.date, n: int, pool=POOL) -> list[str]:
-    """Random stocks from different industries."""
-    return pick_stocks(day, n, {}, pool)
+def pick_tickers(day: dt.date, n: int, pool=ETF_POOL, sector=ETF_GROUP) -> list[str]:
+    """Random picks from different industries (the daily game's funds by default)."""
+    return pick_stocks(day, n, {}, pool, sector=sector)
 
 
 def pre_move(q: dict | None) -> float | None:
@@ -119,7 +153,7 @@ def pre_move(q: dict | None) -> float | None:
     return None
 
 
-def pick_stocks(day: dt.date, n: int, quotes: dict, pool=POOL, movers: int = MOVERS) -> list[str]:
+def pick_stocks(day: dt.date, n: int, quotes: dict, pool=ETF_POOL, movers: int = MOVERS, sector=ETF_GROUP) -> list[str]:
     """Up to `movers` of the day's biggest pre-market movers (they have news behind them) plus random others,
     never two from the same industry, in shuffled order."""
     rng = random.Random(day.isoformat())
@@ -128,18 +162,18 @@ def pick_stocks(day: dt.date, n: int, quotes: dict, pool=POOL, movers: int = MOV
     for t in moved:
         if len(picks) >= min(movers, n):
             break
-        if SECTOR.get(t, t) not in used:
+        if sector.get(t, t) not in used:
             picks.append(t)
-            used.add(SECTOR.get(t, t))
+            used.add(sector.get(t, t))
     groups: dict[str, list[str]] = {}
     for t in pool:
-        groups.setdefault(SECTOR.get(t, t), []).append(t)
+        groups.setdefault(sector.get(t, t), []).append(t)
     free = [g for g in groups if g not in used]
     rng.shuffle(free)
     for g in free[:n - len(picks)]:
         picks.append(rng.choice(groups[g]))
-    if len(picks) < n:  # fewer industries than stocks wanted: allow repeats
-        picks += rng.sample([t for t in pool if t not in picks], n - len(picks))
+    if len(picks) < n:  # fewer industries than wanted: allow repeats
+        picks += rng.sample([t for t in pool if t not in picks], min(n - len(picks), len(pool) - len(picks)))
     rng.shuffle(picks)
     return picks
 
@@ -241,12 +275,14 @@ def fallback_lesson(stocks: list[dict], split: dict) -> str:
 
 def help_text(title: str, bot: str) -> str:
     return (f"🎯 <b>{esc(title)}</b>\n"
-            "Every US trading day you get 5 stocks at 20:30 Singapore time (19:30 in summer). Guess if each one ends "
-            "the day higher or lower than when the market opens:\n"
+            "Every US trading day you get 5 industries at 20:30 Singapore time (19:30 in summer), like tech, banks or "
+            "oil. Each is a fund that holds many companies. Guess if each one ends the day higher or lower than when "
+            "the market opens:\n"
             "⏫ / ⏬ <b>very sure</b>: +5 if right, −11 if wrong\n"
             "⬆️ / ⬇️ <b>think so</b>: +3 if right, −4 if wrong\n"
             "Not sure? Don't tap (0 points).\n"
             f"{esc(bot)} (our AI) plays too. Results come the next morning.\n\n"
+            "💡 /suggest NVDA: suggest a stock for the next game (the 2 most-suggested join it)\n"
             "📌 /pick NVDA: pick any US stock yourself (3 a day, own score)\n"
             "📊 /report: how good your choices are · /board: scores · /bot: how good the AI is\n"
             "Extras, off unless your group turns them on: /halfway on (midnight update), /quiz on (weekend quiz)\n"
@@ -294,20 +330,32 @@ class Game:
     # ---------------------------------------------------------------- texts
     def round_text(self, day: dt.date, stocks: list[dict], voters: int = 0) -> str:
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
-                 "<b>How to play:</b> the US market opens tonight. For each stock below, guess if its price will be "
-                 "<b>higher or lower</b> when the market closes than when it opens.",
+                 "<b>How to play:</b> the US market opens tonight. " + self.what_lines(stocks)
+                 + " Guess if each price will be <b>higher or lower</b> when the market closes than when it opens.",
                  "• Tap ⬆️ if you think higher, ⬇️ if you think lower (+3 if right, −4 if wrong).",
                  "• Very sure? Tap ⏫ or ⏬ instead: +5 if right, but −11 if wrong.",
                  "• Not sure? Skip it: no points lost.",
                  f"{esc(self.bot)} (our AI) is playing too. Can you beat it?", ""]
         for i, s in enumerate(stocks, 1):
-            sector = f" ({SECTOR[s['ticker']]})" if s["ticker"] in SECTOR else ""
-            lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])}{esc(sector)} · {_move(s)}")
+            extra = (f" · {esc(s['note'])}" if s.get("note") else
+                     f" ({esc(SECTOR[s['ticker']])})" if s["ticker"] in SECTOR and s["ticker"] not in ETF_LABEL else "")
+            lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])}{extra} · {_move(s)}")
             if s["headlines"]:
                 lines.append(f"   • {esc(s['headlines'][0]['title'][:110])}")
         lines += ["", f"Picks close at {_sg(lock_at(day))} Singapore time. Results tomorrow morning. "
-                      f"Players so far: {voters}", DISCLAIMER]
+                      f"Players so far: {voters}",
+                  "💡 Want a stock in the next game? Type /suggest and the ticker, like /suggest NVDA.", DISCLAIMER]
         return "\n".join(lines)
+
+    @staticmethod
+    def what_lines(stocks: list[dict]) -> str:
+        funds = sum(s["ticker"] in ETF_LABEL for s in stocks)
+        if funds == len(stocks):
+            return "Each line below is a whole industry (a fund that holds many companies)."
+        if funds:
+            return ("Most lines below are whole industries (funds that hold many companies); the 💡 ones are stocks "
+                    "suggested by players.")
+        return "Each line below is one company's stock."
 
     @staticmethod
     def buttons(day: dt.date, stocks: list[dict]) -> list:
@@ -381,7 +429,7 @@ class Game:
             moved = [s for s in stocks if s["result"] in ("UP", "DOWN")]
             same = sum((s["result"] == "UP") == (mkt > 0) for s in moved)
             lines.append(f"🌍 The whole US market (SPY) went {mkt:+.1%} today."
-                         + (" Most of today's stocks went the same way." if moved and same > len(moved) / 2 else ""))
+                         + (" Most of today's picks went the same way." if moved and same > len(moved) / 2 else ""))
         scored = [s for s in stocks if s["result"] in ("UP", "DOWN") and s["ai_call"]]
         group_right = sum(crowd.get(s["ticker"]) == s["result"] for s in scored)
         ai_right = sum(s["ai_call"] == s["result"] for s in scored)
@@ -509,20 +557,27 @@ class Game:
         return True
 
     def create(self, day: dt.date, now: dt.datetime) -> None:
+        ideas = self.store.suggested(day.isoformat())
         try:
-            q = self.quotes(list(POOL))
+            q = self.quotes(list(dict.fromkeys(ETF_POOL + [i["ticker"] for i in ideas])))
         except Exception as e:  # quotes are context only at this stage
             self.log(f"pre-market quotes failed: {e!r}"[:300])
             q = {}
-        tickers = pick_stocks(day, self.s.stocks_per_day, q) if q else pick_tickers(day, self.s.stocks_per_day)
+        chosen = [i for i in ideas if (q.get(i["ticker"]) or {}).get("last")][:SUGGESTED_MAX]
+        notes = {i["ticker"]: f"💡 suggested by {i['names']}" for i in chosen}
+        n = self.s.stocks_per_day - len(chosen)
+        funds = [t for t in (pick_stocks(day, n + len(chosen), q) if q else pick_tickers(day, n + len(chosen)))
+                 if t not in notes][:n]
+        tickers = [i["ticker"] for i in chosen] + funds
         ready = self.ai_ready()
         if not ready:
             self.log("model unavailable: the AI sits today out")
         stocks = []
         for t in tickers:
             info = q.get(t, {})
-            s = {"ticker": t, "name": info.get("name") or t, "prev_close": info.get("prev_close"),
-                 "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "", "ai_conf": None}
+            s = {"ticker": t, "name": ETF_LABEL.get(t) or info.get("name") or t, "prev_close": info.get("prev_close"),
+                 "pre_price": info.get("pre_price"), "ai_call": None, "ai_reason": "", "ai_conf": None,
+                 "note": notes.get(t, "")}
             s["headlines"] = [{"title": h["title"], "published": h["published"]} for h in self.news(t, s["name"])]
             if ready and self.clock() < at(day, AI_DEADLINE):
                 got = self.call_ai(t, s["name"], info, s["headlines"])
@@ -941,6 +996,8 @@ class Game:
             return self.extra_command(cmd[1:], arg, chat_id), None
         if cmd == "/pick":
             return self.own_command(parts[1] if len(parts) > 1 else "", now)
+        if cmd == "/suggest":
+            return self.suggest_command(parts[1] if len(parts) > 1 else "", user_id, name, now), None
         if cmd == "/today":
             row = self.store.db.execute("SELECT day FROM rounds ORDER BY day DESC LIMIT 1").fetchone()
             if not row:
@@ -1476,3 +1533,33 @@ class Game:
             return None
         first, last = json.loads(self.store.get(f"market:{days[0]}")), json.loads(self.store.get(f"market:{days[-1]}"))
         return last["close"] / first["prev"] - 1 if first.get("prev") else None
+
+    # ---------------------------------------------------------------- suggestions
+    def next_game_day(self, ny: dt.datetime) -> dt.date:
+        d = ny.date()
+        if market.is_trading_day(d) and ny.time() < POST_AT:
+            return d
+        return market.next_trading_day(d)
+
+    def suggest_command(self, arg: str, user_id: int, name: str, now: dt.datetime) -> str:
+        day = self.next_game_day(now.astimezone(NY))
+        ideas = self.store.suggested(day.isoformat())
+        board = " · ".join(f"{i['ticker']} ({i['votes']})" for i in ideas[:5])
+        ticker = arg.upper().lstrip("$")
+        if not ticker:
+            return (f"💡 Suggest a stock for the next game ({day:%a %d %b}): type /suggest and the ticker, like "
+                    f"/suggest NVDA. The {SUGGESTED_MAX} most-suggested join that game."
+                    + (f"\nSo far: {board}" if board else ""))
+        if not TICKER.match(ticker):
+            return f"'{esc(arg)}' doesn't look like a US stock ticker. Try something like /suggest AAPL."
+        try:
+            info = self.quotes([ticker]).get(ticker)
+        except Exception:
+            info = None
+        if not info or not info.get("last"):
+            return f"I can't find {esc(ticker)}. Check the ticker (like AAPL or NVDA) and try again."
+        self.store.player(user_id, name)
+        self.store.suggest(day.isoformat(), user_id, ticker, now.isoformat())
+        board = " · ".join(f"{i['ticker']} ({i['votes']})" for i in self.store.suggested(day.isoformat())[:5])
+        return (f"💡 {esc(name)} suggested <b>{esc(ticker)}</b> ({esc(info['name'])}) for the game on {day:%a %d %b}. "
+                f"The {SUGGESTED_MAX} most-suggested join it.\nSo far: {board}")

@@ -41,13 +41,16 @@ CREATE TABLE IF NOT EXISTS own_picks (id INTEGER PRIMARY KEY AUTOINCREMENT, chat
     user_id INTEGER NOT NULL, ticker TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', call TEXT NOT NULL,
     conf TEXT NOT NULL, made_at TEXT NOT NULL, made_day TEXT NOT NULL, day TEXT NOT NULL, start_price REAL,
     start_kind TEXT NOT NULL, close REAL, result TEXT, posted INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS suggestions (day TEXT NOT NULL, user_id INTEGER NOT NULL, ticker TEXT NOT NULL,
+    at TEXT NOT NULL, PRIMARY KEY (day, user_id));
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 # Columns added after the first release, for databases created before them.
 MIGRATIONS = [("stocks", "ai_conf", "REAL"), ("stocks", "ai_double", "INTEGER NOT NULL DEFAULT 0"),
               ("votes", "double", "INTEGER NOT NULL DEFAULT 0"), ("rounds", "mover", "TEXT"),
               ("rounds", "ai_mover", "TEXT"), ("rounds", "ai_mover_reason", "TEXT NOT NULL DEFAULT ''"),
-              ("votes", "conf", "TEXT"), ("stocks", "why", "TEXT"), ("rounds", "lesson", "TEXT")]
+              ("votes", "conf", "TEXT"), ("stocks", "why", "TEXT"), ("rounds", "lesson", "TEXT"),
+              ("stocks", "note", "TEXT NOT NULL DEFAULT ''")]
 
 # Confidence picks: (points if right, points if wrong). The costs make "sure" pay only when you are right more
 # than 11/16 = 69% of the time, and "lean" more than 4/7 = 57%: overconfidence loses, an honest skip scores 0.
@@ -159,9 +162,10 @@ class Store:
             for i, s in enumerate(stocks):
                 self.db.execute(
                     "INSERT INTO stocks (day, pos, ticker, name, prev_close, pre_price, headlines, ai_call, ai_reason,"
-                    " ai_conf) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    " ai_conf, note) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (day, i, s["ticker"], s["name"], s.get("prev_close"), s.get("pre_price"),
-                     json.dumps(s.get("headlines", [])), s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf")))
+                     json.dumps(s.get("headlines", [])), s.get("ai_call"), s.get("ai_reason", ""), s.get("ai_conf"),
+                     s.get("note", "")))
 
     def set_status(self, day: str, status: str) -> None:
         self.db.execute("UPDATE rounds SET status=? WHERE day=?", (status, day))
@@ -298,6 +302,21 @@ class Store:
                             "JOIN rounds r ON r.day=b.day WHERE b.user_id=? AND r.mover IS NOT NULL AND r.mover != 'VOID'",
                             (user_id,)).fetchone()
         return (r["won"] or 0, r["played"] or 0)
+
+    # ---------------------------------------------------------------- suggestions
+    def suggest(self, day: str, user_id: int, ticker: str, at: str) -> None:
+        """One suggestion per player per game; a new one replaces the old."""
+        self.db.execute("INSERT INTO suggestions VALUES (?,?,?,?) ON CONFLICT(day, user_id) "
+                        "DO UPDATE SET ticker=excluded.ticker, at=excluded.at", (day, user_id, ticker, at))
+        self.db.commit()
+
+    def suggested(self, day: str) -> list[dict]:
+        """[{ticker, votes, names}] most-suggested first (ties: suggested earliest)."""
+        rows = self.db.execute(
+            "SELECT s.ticker, COUNT(*) AS votes, MIN(s.at) AS first, GROUP_CONCAT(p.name, ', ') AS names "
+            "FROM suggestions s JOIN players p USING (user_id) WHERE s.day=? GROUP BY s.ticker "
+            "ORDER BY votes DESC, first ASC", (day,)).fetchall()
+        return [dict(r) for r in rows]
 
     # ---------------------------------------------------------------- own picks
     def add_own(self, **f) -> int:
