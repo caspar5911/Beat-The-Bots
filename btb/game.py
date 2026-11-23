@@ -336,33 +336,23 @@ class Game:
 
     # ---------------------------------------------------------------- texts
     def round_text(self, day: dt.date, stocks: list[dict], voters: int = 0) -> str:
+        """Short on purpose: the buttons name each line, tapping a name shows details."""
         lines = [f"🎯 <b>{esc(self.title)}</b> · {day:%a %d %b}",
-                 "<b>How to play:</b> the US market opens tonight. " + self.what_lines(stocks)
-                 + " Guess if each price will be <b>higher or lower</b> when the market closes than when it opens.",
-                 "• Tap ⬆️ if you think higher, ⬇️ if you think lower (+3 if right, −4 if wrong).",
-                 "• Very sure? Tap ⏫ or ⏬ instead: +5 if right, but −11 if wrong.",
-                 "• Not sure? Skip it: no points lost.",
-                 f"{esc(self.bot)} (our AI) is playing too. Can you beat it?", ""]
-        for i, s in enumerate(stocks, 1):
-            extra = (f" · {esc(s['note'])}" if s.get("note") else
-                     f" ({esc(SECTOR[s['ticker']])})" if s["ticker"] in SECTOR and s["ticker"] not in ETF_LABEL else "")
-            lines.append(f"<b>{i}. {esc(s['ticker'])}</b> {esc(s['name'])}{extra} · {_move(s)}")
-            if s["headlines"]:
-                lines.append(f"   • {esc(s['headlines'][0]['title'][:110])}")
-        lines += ["", f"Picks close at {_sg(lock_at(day))} Singapore time. Results tomorrow morning. "
-                      f"Players so far: {voters}",
-                  "💡 Want a stock in the next game? Type /suggest and the ticker, like /suggest NVDA.", DISCLAIMER]
+                 "Higher or lower at the close than at the open? " + self.what_lines(stocks),
+                 "⬆️⬇️ +3 / −4 · ⏫⏬ very sure +5 / −11 · not sure: skip"]
+        lines += [f"{esc(s['note'])}: <b>{esc(s['ticker'])}</b>" for s in stocks if s.get("note")]
+        lines += [f"🔒 Picks close {_sg(lock_at(day))} · 👥 {voters} playing · 🤖 {esc(self.short)} is playing too",
+                  "<i>Just a game, not advice. Tap a name for details.</i>"]
         return "\n".join(lines)
 
     @staticmethod
     def what_lines(stocks: list[dict]) -> str:
         funds = sum(s["ticker"] in ETF_LABEL for s in stocks)
         if funds == len(stocks):
-            return "Each line below is a whole industry (a fund that holds many companies)."
+            return "Each line is a whole industry."
         if funds:
-            return ("Most lines below are whole industries (funds that hold many companies); the 💡 ones are stocks "
-                    "suggested by players.")
-        return "Each line below is one company's stock."
+            return "Lines are whole industries, except the stocks players added."
+        return ""
 
     def add_command(self, arg: str, user_id: int, name: str, now: dt.datetime, chat_id: int | None):
         """Add a stock to today's open game: it joins the game message; picking it is optional."""
@@ -424,8 +414,11 @@ class Game:
         if t in ETF_LABEL:
             short = {"XLK": "Tech", "SMH": "Chip makers", "XLU": "Power & water"}
             icon_ = "🔌" if t == "SMH" else ETF_ICON.get(ETF_GROUP.get(t, ""), "📊")
-            return f"{icon_} {short.get(t) or ETF_LABEL[t].split(' (')[0]} · {t}"
-        return f"📈 {s.get('name') or t} · {t}"[:40]
+            name = f"{icon_} {short.get(t) or ETF_LABEL[t].split(' (')[0]} · {t}"
+        else:
+            name = f"📈 {(s.get('name') or t)[:22]} · {t}"
+        m = pre_move(s)
+        return name + (f" {m:+.1%}" if m is not None else "")
 
     @staticmethod
     def choice_row(key: str, t: str) -> list:

@@ -137,7 +137,7 @@ def test_whole_day():
     assert ts[0] in game.on_button(buttons[0][0][1], 7, "Ann", ny(DAY, 8)) and game.is_alert(buttons[0][0][1])
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
-    assert "Huat or Not?" in text and "Not money advice" in text and "How to play" in text and "Not sure? Skip it" in text
+    assert "Huat or Not?" in text and "not advice" in text and "not sure: skip" in text
     assert "goes up" not in text                     # the AI's calls stay hidden until the lock
     assert calls == ts
     up, down = buttons[0][0][1], buttons[0][1][1]
@@ -959,7 +959,7 @@ def test_open_round_switches_to_new_rules_on_start():
     game.refresh_open_rounds()
     v = store.votes(key)[0]
     assert (v["conf"], v["double"]) == ("lean", 0)
-    assert tg.edits and "How to play" in tg.edits[-1][1]
+    assert tg.edits and "not sure: skip" in tg.edits[-1][1]
     assert "Unknown" in game.on_button(f"d|20261123|{t}", 7, "Ann", ny(DAY, 9))   # double down is gone
 
 
@@ -1084,8 +1084,8 @@ def test_suggestions_join_the_next_game():
     ts = tickers(store)
     assert ts[:2] == ["NVDA", "TSLA"] and ts[2] in g.ETF_POOL                 # 3 per day in tests: 2 ideas + 1 fund
     text = tg.sent[0][0]
-    assert "💡 suggested by Ann, Ben" in text and "💡 suggested by Cat" in text and "/suggest NVDA" in text
-    assert g.esc(g.ETF_LABEL[ts[2]]) in text and "Most lines below are whole industries" in text
+    assert "💡 suggested by Ann, Ben: <b>NVDA</b>" in text and "💡 suggested by Cat: <b>TSLA</b>" in text
+    assert "except the stocks players added" in text
 
 
 def test_funds_get_industry_news():
@@ -1112,8 +1112,8 @@ def test_intro_matches_what_is_in_the_round():
     fund = {"ticker": "XLE"}
     stock = {"ticker": "AMZN"}
     assert "whole industry" in g.Game.what_lines([fund, fund])
-    assert "suggested by players" in g.Game.what_lines([stock, fund])
-    assert "one company's stock" in g.Game.what_lines([stock, stock])
+    assert "players added" in g.Game.what_lines([stock, fund])
+    assert g.Game.what_lines([stock, stock]) == ""
 
 
 
@@ -1127,7 +1127,7 @@ def test_add_a_stock_to_todays_game():
     stocks = store.stocks(DAY.isoformat())
     assert [s["ticker"] for s in stocks] == ts + ["NVDA"] and stocks[-1]["note"] == "➕ added by Ann"
     assert stocks[-1]["ai_call"] == "UP"                                       # the AI picks it too
-    assert "NVDA" in tg.edits[-1][1] and "➕ added by Ann" in tg.edits[-1][1]   # game message updated
+    assert "➕ added by Ann: <b>NVDA</b>" in tg.edits[-1][1]   # game message updated
     assert "already in today's game" in game.on_command("/add NVDA", 8, "Ben", ny(DAY, 8))[0]
     for t in ("TSLA", "KO"):
         q.set(t, last=10.0, prev_close=10.0, when=ny(DAY - dt.timedelta(days=3), 16))
