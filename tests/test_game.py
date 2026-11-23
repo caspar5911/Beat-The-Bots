@@ -1399,3 +1399,14 @@ def test_picks_closed_message_shows_who_and_the_ai_against_the_group():
     assert "👥 Ann ⬆️ · Ben ⬆️" in lock and "👥 ⬆️ 0 · ⬇️ 8" in lock               # names, or counts when many
     assert "“A 16% jump after a crash is a lot to hold all day.”" in lock and "Humans love tops" not in lock
     assert "⚔️ Ah Huat is going <b>against the group</b> on" in lock and "Results at 05:10" in lock
+
+
+
+def test_ai_reason_is_cut_at_a_natural_break():
+    r = ("A 16% pre-market pop after last week's crash is a lot of excitement to hold all day — "
+         "I've seen humans buy tops like this before.")
+    assert g.short_reason(r) == "A 16% pre-market pop after last week's crash is a lot of excitement to hold all day"
+    assert g.short_reason("Short one. Second sentence.") == "Short one."
+    long_clause = "word " * 40
+    cut = g.short_reason(long_clause)
+    assert len(cut) <= 110 and cut.endswith("…") and not cut.endswith(" …")

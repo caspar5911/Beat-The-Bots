@@ -296,6 +296,23 @@ def fallback_lesson(stocks: list[dict], split: dict) -> str:
     return LESSONS[day % len(LESSONS)]
 
 
+def short_reason(text: str, limit: int = 110) -> str:
+    """The AI's reason cut to a whole thought: first sentence, then whole clauses (at a dash, semicolon or comma)
+    while they fit; only a single over-long clause is cut at a word."""
+    first = re.split(r"(?<=[.!?])\s", text.strip())[0]
+    if len(first) <= limit:
+        return first
+    parts = re.split(r"(\s[—–-]\s|;\s|,\s)", first)
+    out = parts[0]
+    for sep, part in zip(parts[1::2], parts[2::2]):
+        if len(out + sep + part) > limit:
+            break
+        out += sep + part
+    if len(out) > limit:
+        out = out[:limit - 1].rsplit(" ", 1)[0] + "…"
+    return out.rstrip(" ,;—–-")
+
+
 def clean_headline(title: str) -> str:
     """A raw headline without the ' - Publisher' tail; skipped if it's mostly not English letters."""
     t = re.sub(r"\s+-\s+[^-]+$", "", title or "").strip()
@@ -886,8 +903,7 @@ class Game:
                 lines.append(f"👥 ⬆️ {up} · ⬇️ {len(mine) - up}")
             if s["ai_call"]:
                 conf = "sure" if (s["ai_conf"] or 0) >= SURE_AT else "lean"
-                reason = re.split(r"(?<=[.!?])\s", (s["ai_reason"] or "").strip())[0]
-                reason = reason if len(reason) <= 110 else reason[:107].rstrip() + "…"
+                reason = short_reason(s["ai_reason"] or "")
                 lines.append(f"🤖 {esc(self.short)} {icon(s['ai_call'], conf)} ({(s['ai_conf'] or 0.5):.0%} sure)"
                              + (f": <i>“{esc(reason)}”</i>" if reason else ""))
                 if s["ticker"] in crowd and crowd[s["ticker"]] != s["ai_call"]:
