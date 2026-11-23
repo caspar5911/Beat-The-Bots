@@ -8,7 +8,7 @@ Just a game: no money, not investment advice.
 
 | When | What happens |
 |---|---|
-| 08:45 | Round posted: 5 stocks, pre-market move, two fresh headlines each, ⬆️ / ⬇️ / 🎯 x2 buttons. The AI makes its calls, hidden. |
+| 07:30 | Round posted: 5 stocks, pre-market move, two fresh headlines each, ⬆️ / ⬇️ / 🎯 x2 buttons. The AI makes its calls, hidden. |
 | 09:20 | Reminder tagging regular players who still have picks to make. |
 | until 09:30 | Players tap their calls (changeable). Votes are judged by the time the server receives them. |
 | 09:30 | Picks lock; the AI's calls, one-line trash talk and its double-down are revealed. |

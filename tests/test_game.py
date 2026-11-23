@@ -53,7 +53,7 @@ def make(ai=True, ai_ready=True, clock_at=None, conf=None, banter=None):
         calls.append(t)
         return ("UP", f"{t} goes up, humans", (conf or {}).get(t, 0.5)) if ai else None
 
-    clock = {"now": clock_at or ny(DAY, 8, 45)}
+    clock = {"now": clock_at or ny(DAY, 7, 30)}
     game = g.Game(Settings(stocks_per_day=3), store, tg, quotes=q,
                   news=lambda t, n: [{"title": f"{t} news", "published": dt.datetime(2026, 11, 23, 12, tzinfo=dt.timezone.utc)}],
                   call_ai=call_ai, ai_ready=lambda: ai_ready, banter=banter, log=lambda *_: None,
@@ -89,9 +89,9 @@ def test_session_prices():
 
 
 def full_day(game, store, tg, q, clock):
-    game.tick(ny(DAY, 8, 44))
+    game.tick(ny(DAY, 7, 29))
     assert store.round(DAY.isoformat()) is None
-    game.tick(ny(DAY, 8, 45))
+    game.tick(ny(DAY, 7, 30))
     ts = tickers(store)
     for t in ts:
         q.set(t)
@@ -291,7 +291,7 @@ def test_failed_post_is_retried_until_lock():
     real = tg.send
     tg.send = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Telegram 502"))
     with pytest.raises(RuntimeError):
-        game.tick(ny(DAY, 8, 45))
+        game.tick(ny(DAY, 7, 30))
     assert store.round(DAY.isoformat())["message_id"] is None
     tg.send = real
     game.tick(ny(DAY, 8, 46))
@@ -478,8 +478,8 @@ def test_weekly_titles_on_last_trading_day():
     fri = dt.date(2026, 11, 20)
     assert g.last_of_week(fri) and not g.last_of_week(DAY)
     assert g.last_of_week(dt.date(2026, 11, 27))                              # half-day Friday
-    game, store, tg, q, calls, clock = make(clock_at=ny(fri, 8, 45))
-    game.tick(ny(fri, 8, 45))
+    game, store, tg, q, calls, clock = make(clock_at=ny(fri, 7, 30))
+    game.tick(ny(fri, 7, 30))
     ts = tickers(store, fri)
     b = game.buttons(fri, store.stocks(fri.isoformat()))
     for i, row in enumerate(b):

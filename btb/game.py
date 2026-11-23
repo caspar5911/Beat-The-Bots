@@ -1,7 +1,7 @@
 """The game: a daily round of stocks; players and the AI call each close as above (UP) or below (DOWN) its open.
 
 Timeline on each NYSE trading day (New York time; Singapore is +13h in winter, +12h in summer):
-  08:45  round posted: stocks, pre-market move, headlines, ⬆️/⬇️/🎯x2 buttons. The AI's calls are made, hidden.
+  07:30  round posted: stocks, pre-market move, headlines, ⬆️/⬇️/🎯x2 buttons. The AI's calls are made, hidden.
   09:20  reminder, tagging regular players who still have picks to make.
   09:30  picks lock (votes are judged by the server time they arrive); the AI's calls and double-down revealed.
   09:35+ opening prices captured.
@@ -25,7 +25,7 @@ POOL = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", 
         "INTC", "DIS", "NKE", "SBUX", "BA", "JPM", "UBER", "SHOP", "MU", "ORCL", "CRM", "PYPL", "ADBE",
         "COST", "WMT", "KO", "MCD", "XOM", "LLY", "UNH", "V", "GS", "ABNB", "SNOW", "ARM", "SMCI", "RIVN", "HOOD"]
 
-POST_AT = dt.time(8, 45)
+POST_AT = dt.time(7, 30)       # 20:30 Singapore in winter: two hours to play
 LAST_POST = dt.time(9, 20)       # too late to give people time to play: skip the day
 REMIND_AT = dt.time(9, 20)
 AI_DEADLINE = dt.time(9, 15)     # stop asking the model; later stocks are played without the AI
@@ -124,7 +124,7 @@ def fallback_banter(bot: str, today: list[dict]) -> str:
 
 def help_text(title: str, bot: str) -> str:
     return (f"🎯 <b>{esc(title)}</b>\nEvery US trading day a round of stocks is posted before the open "
-            "(21:45 Singapore in winter, 20:45 in summer). Tap ⬆️ if you think a stock closes above its opening "
+            "(20:30 Singapore in winter, 19:30 in summer). Tap ⬆️ if you think a stock closes above its opening "
             "price, ⬇️ if below. Tap 🎯 x2 on your surest pick to double it: +2 if right, −1 if wrong. "
             f"You can change your mind until the 09:30 New York open. {esc(bot)} (our own AI) plays too.\n"
             "Halftime scores around midnight, results before breakfast, titles every Friday.\n\n"
@@ -633,7 +633,7 @@ class Game:
             lines += ["", "Nobody played. Send /practice to try again."]
         if any(s["ai_call"] for s in p["stocks"]):
             lines.append(f"{esc(self.bot)}: {bot_right}/{n}")
-        lines.append("The real round posts every US trading day at 21:45 Singapore (20:45 in summer).")
+        lines.append("The real round posts every US trading day at 20:30 Singapore (19:30 in summer).")
         self.tg.send("\n".join(lines), None, silent=False)
         p["revealed"] = True
         self.store.set("practice", json.dumps(p))
