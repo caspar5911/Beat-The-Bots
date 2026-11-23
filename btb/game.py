@@ -550,7 +550,10 @@ class Game:
             return "Today's picks are closed, so the game can't be restarted any more.", None
         picks = sum(1 for v in self.store.votes(day.isoformat()) if v["user_id"] != BOT_ID)
         key = day.strftime("%Y%m%d")
-        return (f"🔄 Restart tonight's game? A new game is posted straight away"
+        preset = self.store.get(f"preset:{day.isoformat()}")
+        return (f"🔄 Restart tonight's game? A new game "
+                + ("with your chosen industries" if preset else "with different industries")
+                + " is posted straight away"
                 + (f" and <b>{picks} pick{'s' if picks != 1 else ''} will be deleted</b>." if picks else ".")), \
             [[("✅ Yes, restart", f"z|{key}|yes"), ("✖️ No", f"z|{key}|no")]]
 
@@ -580,8 +583,9 @@ class Game:
             if mid:
                 self.edit(chat, mid, f"♻️ <b>This game was restarted by {esc(name)}.</b> Please pick on the new message "
                                      "below.", None)
+        previous = {s["ticker"] for s in self.store.stocks(key)}
         self.store.delete_round(key)
-        self.create(day, now, ai_until=lock_at(day) - dt.timedelta(minutes=3))
+        self.create(day, now, ai_until=lock_at(day) - dt.timedelta(minutes=3), avoid=previous)
         return "Restarted!", f"🔄 Restarted by {esc(name)}. The new game is below.", None
 
     def make_line(self, ticker: str, info: dict, note: str = "") -> dict:
@@ -1036,7 +1040,9 @@ class Game:
         self._tried[(what, key)] = ny
         return True
 
-    def create(self, day: dt.date, now: dt.datetime, ai_until: dt.datetime | None = None) -> None:
+    def create(self, day: dt.date, now: dt.datetime, ai_until: dt.datetime | None = None,
+               avoid: set | None = None) -> None:
+        """avoid: lines of a game being restarted, so the automatic choice comes out different."""
         preset = json.loads(self.store.get(f"preset:{day.isoformat()}", "[]"))
         ideas = [] if preset else self.store.suggested(day.isoformat())
         try:
@@ -1047,7 +1053,10 @@ class Game:
         chosen = [i for i in ideas if (q.get(i["ticker"]) or {}).get("last")][:SUGGESTED_MAX]
         notes = {i["ticker"]: f"💡 suggested by {i['names']}" for i in chosen}
         n = self.s.stocks_per_day - len(chosen)
-        funds = [t for t in (pick_stocks(day, n + len(chosen), q) if q else pick_tickers(day, n + len(chosen)))
+        pool = [t for t in ETF_POOL if t not in (avoid or set())]
+        if len({ETF_GROUP[t] for t in pool}) < n + len(chosen):   # restarted so often there's too little left
+            pool = list(ETF_POOL)
+        funds = [t for t in (pick_stocks(day, n + len(chosen), q, pool) if q else pick_tickers(day, n + len(chosen), pool))
                  if t not in notes][:n]
         tickers = [i["ticker"] for i in chosen] + funds
         if preset:

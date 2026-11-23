@@ -1359,3 +1359,19 @@ def test_restart_todays_game():
     assert "can't be restarted" in game.on_command("/restart", 7, "Ann", ny(DAY, 9, 31))[0]
     menu = game.select_menu(ny(DAY, 9), CHAT)[1]
     assert menu[-1][0][1] == "z|20261123|ask"
+
+
+
+def test_restart_gives_different_industries():
+    game, store, tg, q, calls, clock = make()
+    object.__setattr__(game.s, "stocks_per_day", 5)
+    game.tick(ny(DAY, 7, 30))
+    first = set(tickers(store))
+    text, _ = game.on_command("/restart", 7, "Ann", ny(DAY, 9))
+    assert "with different industries" in text
+    game.on_restart("z|20261123|yes", 7, "Ann", ny(DAY, 9, 1), CHAT)
+    second = set(tickers(store))
+    assert len(second) == 5 and not (first & second)
+    assert len({g.ETF_GROUP[t] for t in second}) == 5
+    game.on_restart("z|20261123|yes", 7, "Ann", ny(DAY, 9, 2), CHAT)        # too few left: any industries again
+    assert len(set(tickers(store))) == 5
