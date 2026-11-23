@@ -82,8 +82,13 @@ def make(ai=True, ai_ready=True, clock_at=None, conf=None, banter=None, mover=No
 
 
 def lean_rows(b):
-    """Stock rows reordered as [lean up, lean down, sure up, sure down] (the keyboard is ⏫ ⬆️ ⬇️ ⏬ per stock)."""
-    return [[r[1], r[2], r[0], r[3]] for r in b[:-1]]
+    """Choice rows reordered as [lean up, lean down, sure up, sure down] (each line: a name row, then ⏫ ⬆️ ⬇️ ⏬)."""
+    return [[r[1], r[2], r[0], r[3]] for r in choices(b)]
+
+
+def choices(b):
+    """Just the 4-button choice rows of a keyboard, in order (sure up, up, down, sure down)."""
+    return [r for r in b if len(r) == 4]
 
 
 def tickers(store, day=DAY):
@@ -127,7 +132,9 @@ def test_whole_day():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
     text, buttons = tg.sent[0]
-    assert [len(r) for r in buttons] == [4, 4, 4, 1] and buttons[-1][0][1] == "k|20261123"   # + "My picks"
+    assert [len(r) for r in buttons] == [1, 4, 1, 4, 1, 4, 1] and buttons[-1][0][1] == "k|20261123"   # + "My picks"
+    assert buttons[0][0][1] == f"i|20261123|{ts[0]}" and g.ETF_LABEL[ts[0]].split(" (")[0] in buttons[0][0][0] or ts[0] == "SMH"
+    assert ts[0] in game.on_button(buttons[0][0][1], 7, "Ann", ny(DAY, 8)) and game.is_alert(buttons[0][0][1])
     assert all(len(cb.encode()) <= 64 for row in buttons for _, cb in row)
     buttons = lean_rows(buttons)
     assert "Huat or Not?" in text and "Not money advice" in text and "How to play" in text and "Not sure? Skip it" in text
@@ -252,7 +259,7 @@ def test_commands_and_group_handling():
     assert "no scores" in game.on_command("/me", 1, "Ann", ny(DAY, 9))[0]
     assert game.on_command("/unknown", 1, "Ann", ny(DAY, 9)) is None
     # buttons from groups the game doesn't play in are refused; votes answer with a toast
-    cb = buttons[0][0][1]
+    cb = choices(buttons)[0][0][1]
     handle(game, tg, {"callback_query": {"id": "x", "data": cb, "from": {"id": 5, "first_name": "Eve"},
                                          "message": {"chat": {"id": -999, "type": "group"}}}}, ny(DAY, 9))
     assert tg.answers[-1].startswith("This game") and not store.votes(DAY.isoformat())
@@ -397,7 +404,7 @@ def settle_day(game, q, ts, day, closes, opens=None):
 def test_confidence_rules_and_scoring():
     game, store, tg, q, calls, clock = make()
     ts = full_day(game, store, tg, q, clock)
-    b = game.buttons(DAY, store.stocks(DAY.isoformat()))
+    b = choices(game.buttons(DAY, store.stocks(DAY.isoformat())))
     sure_up, lean_up, lean_down, sure_down = (x[1] for x in b[0])
     assert "very sure up (+5 / -11)" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9))
     assert "cancelled" in game.on_button(sure_up, 7, "Ann", ny(DAY, 9, 1))     # tap again: skip
@@ -824,7 +831,7 @@ def test_decision_reports():
     game, store, tg, q, calls, clock = make(clock_at=ny(fri, 7, 30))
     game.tick(ny(fri, 7, 30))
     ts = tickers(store, fri)
-    b = game.buttons(fri, store.stocks(fri.isoformat()))
+    b = choices(game.buttons(fri, store.stocks(fri.isoformat())))
     game.on_button(b[0][0][1], 7, "Ann", ny(fri, 9))                         # #1 sure up
     game.on_button(b[1][0][1], 7, "Ann", ny(fri, 9))                         # #2 sure up
     game.on_button(b[2][1][1], 7, "Ann", ny(fri, 9))                         # #3 think so up
@@ -1032,6 +1039,7 @@ def test_my_picks_popup_and_toast():
     ts = full_day(game, store, tg, q, clock)
     b = game.buttons(DAY, store.stocks(DAY.isoformat()))
     mine = b[-1][0][1]
+    b = choices(b)
     assert game.is_alert(mine)
     assert "haven't picked" in game.on_button(mine, 7, "Ann", ny(DAY, 9))
     toast = game.on_button(b[0][1][1], 7, "Ann", ny(DAY, 9))
@@ -1114,7 +1122,8 @@ def test_add_a_stock_to_todays_game():
     ts = full_day(game, store, tg, q, clock)
     q.set("NVDA", last=180.0, prev_close=176.0, pre=180.0, when=ny(DAY - dt.timedelta(days=3), 16))
     text, row = game.on_command("/add nvda", 7, "Ann", ny(DAY, 8))
-    assert "Ann added <b>NVDA</b>" in text and "Skip it" in text and [cb for _, cb in row[0]][0] == "v|20261123|NVDA|U|s"
+    assert "Ann added <b>NVDA</b>" in text and "Skip it" in text and [cb for _, cb in row[1]][0] == "v|20261123|NVDA|U|s"
+    assert row[0][0][1] == "i|20261123|NVDA"
     stocks = store.stocks(DAY.isoformat())
     assert [s["ticker"] for s in stocks] == ts + ["NVDA"] and stocks[-1]["note"] == "➕ added by Ann"
     assert stocks[-1]["ai_call"] == "UP"                                       # the AI picks it too
@@ -1127,9 +1136,9 @@ def test_add_a_stock_to_todays_game():
     assert "already has 3 added" in game.on_command("/add AAPL", 8, "Ben", ny(DAY, 8))[0]
     # picking an added stock is optional: the reminder only counts the main stocks
     store.player(9, "Cat"); store.member(CHAT, 9); store.vote("2026-11-20", "XLK", 9, "UP", "x")
-    for r in game.buttons(DAY, store.stocks(DAY.isoformat()))[:3]:
+    for r in choices(game.buttons(DAY, store.stocks(DAY.isoformat())))[:3]:
         game.on_button(r[1][1], 9, "Cat", ny(DAY, 9))
-    game.on_button(row[0][1][1], 8, "Ben", ny(DAY, 9))                       # Ben has an opinion on NVDA
+    game.on_button(row[1][1][1], 8, "Ben", ny(DAY, 9))                       # Ben has an opinion on NVDA
     game.tick(ny(DAY, 9, 20))
     assert "Cat" not in tg.sent[-1][0]
     game.tick(ny(DAY, 9, 30))

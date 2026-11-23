@@ -75,6 +75,9 @@ ETF_NEWS = {  # (news search, words a headline must contain)
     "XLU": ('"utility stocks" OR "utilities stocks"', ["utility", "utilities"]),
     "XLB": ('"materials stocks" OR "copper prices" OR "chemical stocks"', ["copper", "chemical", "steel", "materials stocks"]),
 }
+ETF_ICON = {"Tech": "💻", "Internet & media": "📺", "Shopping & cars": "🛒", "Everyday goods": "🧴", "Banks": "🏦",
+            "Health": "💊", "Oil & gas": "🛢️", "Factories & planes": "🏭", "Property": "🏢", "Power & water": "💡",
+            "Materials": "⛏️"}
 SUGGESTED_MAX = 2                 # most-suggested stocks that join a game
 ADDED_MAX = 3                     # stocks players may add to today's game before picks close
 ADDED = "➕ added by "
@@ -409,20 +412,51 @@ class Game:
             if mid:
                 self.edit(chat, mid, self.round_text(day, stocks, self.voters(key, chat)), self.buttons(day, stocks))
         k = day.strftime("%Y%m%d")
-        row = [[(f"⏫ {ticker}", f"v|{k}|{ticker}|U|s"), ("⬆️", f"v|{k}|{ticker}|U|l"),
-                ("⬇️", f"v|{k}|{ticker}|D|l"), (f"⏬ {ticker}", f"v|{k}|{ticker}|D|s")]]
+        row = [[(self.label(s), f"i|{k}|{ticker}")], self.choice_row(k, ticker)]
         return (f"➕ {esc(name)} added <b>{esc(ticker)}</b> ({esc(s['name'])}) to today's game · {_move(s)}.\n"
                 f"Got an opinion? Tap below (or in the game message). Not sure? Skip it, no points lost. "
                 f"Picks close at {_sg(lock_at(day))} Singapore time."), row
 
     @staticmethod
-    def buttons(day: dt.date, stocks: list[dict]) -> list:
+    def label(s: dict) -> str:
+        """Button title for a game line: industry name for funds, company name for stocks."""
+        t = s["ticker"]
+        if t in ETF_LABEL:
+            short = {"XLK": "Tech", "SMH": "Chip makers", "XLU": "Power & water"}
+            icon_ = "🔌" if t == "SMH" else ETF_ICON.get(ETF_GROUP.get(t, ""), "📊")
+            return f"{icon_} {short.get(t) or ETF_LABEL[t].split(' (')[0]} · {t}"
+        return f"📈 {s.get('name') or t} · {t}"[:40]
+
+    @staticmethod
+    def choice_row(key: str, t: str) -> list:
+        return [("⏫ Sure", f"v|{key}|{t}|U|s"), ("⬆️ Up", f"v|{key}|{t}|U|l"),
+                ("⬇️ Down", f"v|{key}|{t}|D|l"), ("⏬ Sure", f"v|{key}|{t}|D|s")]
+
+    @classmethod
+    def buttons(cls, day: dt.date, stocks: list[dict]) -> list:
         key = day.strftime("%Y%m%d")
-        rows = [[(f"⏫ {s['ticker']}", f"v|{key}|{s['ticker']}|U|s"), ("⬆️", f"v|{key}|{s['ticker']}|U|l"),
-                 ("⬇️", f"v|{key}|{s['ticker']}|D|l"), (f"⏬ {s['ticker']}", f"v|{key}|{s['ticker']}|D|s")]
-                for s in stocks]
+        rows = []
+        for s in stocks:
+            rows.append([(cls.label(s), f"i|{key}|{s['ticker']}")])
+            rows.append(cls.choice_row(key, s["ticker"]))
         rows.append([("👀 My picks", f"k|{key}")])
         return rows
+
+    def on_info(self, data: str) -> str:
+        """Private pop-up about one line of the game: what's in it, its early move, the top headline."""
+        try:
+            _, d, ticker = data.split("|")
+            key = dt.datetime.strptime(d, "%Y%m%d").date().isoformat()
+        except ValueError:
+            return "Unknown button."
+        s = next((s for s in self.store.stocks(key) if s["ticker"] == ticker), None)
+        if not s:
+            return "That game is over."
+        lines = [f"{ticker}: {s['name']}", f"Before the open: {_move(s).replace(' before the market opened', '')}"]
+        if s["headlines"]:
+            lines.append(f"News: {s['headlines'][0]['title']}")
+        lines.append("Tap ⬆️ Up / ⬇️ Down, or ⏫ / ⏬ if very sure.")
+        return "\n".join(lines)[:200]
 
     def split(self, key: str, chat_id: int | None) -> dict[str, dict[str, int]]:
         """{ticker: {"UP": n, "DOWN": n}} among the group's human players."""
@@ -937,6 +971,8 @@ class Game:
             return self.on_why(data)
         if data.startswith("k|"):
             return self.my_picks(data, user_id)
+        if data.startswith("i|"):
+            return self.on_info(data)
         if data.startswith("p|"):
             return self.practice_vote(data, user_id, name, now, chat_id)
         if data.startswith("o|"):
@@ -950,7 +986,7 @@ class Game:
     @staticmethod
     def is_alert(data: str) -> bool:
         """Answers shown as a pop-up the player must close (longer text)."""
-        return data.startswith(("w|", "k|"))
+        return data.startswith(("w|", "k|", "i|"))
 
     def on_why(self, data: str) -> str:
         try:
